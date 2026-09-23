@@ -21,7 +21,7 @@ Convert selected SiYuan documents to Astro blog Markdown and sync them into the 
 
 In plugin settings or the publisher, click “Choose blog project folder” and select the repository root. Direct sync writes Markdown to `src/content/blog`, images to `public/images/blog`, and the sync manifest to `.siyuan-sync.json` at the repository root.
 
-Choose the folder once in SiYuan on Windows and once on macOS. Each computer keeps its folder permission in local browser storage; it is not part of synced SiYuan settings. If the system asks again later, grant read and write access. The plugin does not need the absolute path or a running Bridge.
+The settings show separate Windows and macOS blog project folders. Choose the Windows repository on Windows and the macOS repository on macOS; publishing automatically uses the folder for the current system. Folder names sync with SiYuan settings, while each computer keeps its actual folder permission in local browser storage. Choose once on each computer. If the system asks again later, grant read and write access. The plugin does not need the absolute path or a running Bridge.
 
 In the publisher, scan documents, review the generated Markdown, and click “Sync to local repository”. Commit and push the resulting files separately from the blog project's own code directory with your usual Git client or terminal.
 

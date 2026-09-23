@@ -1,7 +1,7 @@
 {
   "name": "siyuan-blog-publisher",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "SiYuan plugin for publishing selected documents directly to a chosen local blog project folder",
   "scripts": {
     "build": "esbuild src/index.js --bundle --platform=browser --format=cjs --external:siyuan --outfile=index.js --legal-comments=none && node scripts/package-plugin.js",

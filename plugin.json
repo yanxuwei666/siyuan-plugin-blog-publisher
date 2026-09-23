@@ -2,7 +2,7 @@
   "name": "siyuan-plugin-blog-publisher",
   "author": "yanxuwei666",
   "url": "https://github.com/yanxuwei666/siyuan-plugin-blog-publisher",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "minAppVersion": "3.8.5",
   "publish": {
     "resources": [],

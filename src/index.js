@@ -113,54 +113,79 @@ class BlogPublisherPlugin extends Plugin {
         const contentDir = textField(this.config.contentDir, "src/content/blog");
         const assetDir = textField(this.config.assetDir, "public/images/blog");
         const directoryStore = new DirectoryStore();
-        const directorySummary = document.createElement("span");
-        directorySummary.className = "siyuan-blog-publisher__directory-summary";
-        const chooseDirectoryButton = document.createElement("button");
-        chooseDirectoryButton.type = "button";
-        chooseDirectoryButton.className = "b3-button b3-button--outline";
-        chooseDirectoryButton.textContent = this.t("chooseBlogDirectory");
-        const directoryAction = document.createElement("div");
-        directoryAction.className = "siyuan-blog-publisher__setting-action";
-        directoryAction.append(directorySummary, chooseDirectoryButton);
+        const directoryRows = document.createElement("div");
+        directoryRows.className = "siyuan-blog-publisher__directory-rows";
+        const directoryControls = new Map();
+        const currentPlatform = directoryStore.platform;
         const refreshDirectorySummary = async () => {
-            if (!DirectoryStore.isSupported()) {
-                directorySummary.textContent = this.t("directoryPickerUnavailable");
-                chooseDirectoryButton.disabled = true;
-                return;
+            let currentHandle = null;
+            let storageError = "";
+            if (DirectoryStore.isSupported()) {
+                try {
+                    currentHandle = await directoryStore.getHandle();
+                } catch (error) {
+                    storageError = error.message;
+                }
             }
-            chooseDirectoryButton.disabled = false;
-            try {
-                const handle = await directoryStore.getHandle();
-                directorySummary.textContent = handle
-                    ? this.t("selectedDirectorySummary", {
-                        platform: platformLabelForKey(directoryStore.platform, (key) => this.t(key)),
-                        directory: handle.name,
-                    })
-                    : this.t("directoryNotSelectedSummary", {
-                        platform: platformLabelForKey(directoryStore.platform, (key) => this.t(key)),
-                    });
-            } catch (error) {
-                directorySummary.textContent = this.t("directoryStorageFailed", { error: error.message });
+            for (const [platform, control] of directoryControls) {
+                const isCurrent = platform === currentPlatform;
+                const savedName = this.config[directoryNameConfigKey(platform)] || "";
+                control.button.disabled = !isCurrent || !DirectoryStore.isSupported();
+                control.button.textContent = isCurrent
+                    ? this.t("chooseBlogDirectory")
+                    : this.t("directoryChooseOnThisPlatform");
+                if (isCurrent && !DirectoryStore.isSupported()) {
+                    control.summary.textContent = this.t("directoryPickerUnavailable");
+                } else if (isCurrent && storageError) {
+                    control.summary.textContent = this.t("directoryStorageFailed", { error: storageError });
+                } else if (isCurrent && currentHandle) {
+                    control.summary.textContent = this.t("directoryAuthorizedSummary", { directory: currentHandle.name });
+                } else if (isCurrent && savedName) {
+                    control.summary.textContent = this.t("directoryNeedsAuthorizationSummary", { directory: savedName });
+                } else if (savedName) {
+                    control.summary.textContent = this.t("directoryConfiguredSummary", { directory: savedName });
+                } else {
+                    control.summary.textContent = this.t("directoryChooseOnPlatformSummary");
+                }
             }
         };
-        await refreshDirectorySummary();
-        chooseDirectoryButton.addEventListener("click", async () => {
-            chooseDirectoryButton.disabled = true;
-            try {
-                const handle = await directoryStore.chooseAndSave();
-                directorySummary.textContent = this.t("selectedDirectorySummary", {
-                    platform: platformLabelForKey(directoryStore.platform, (key) => this.t(key)),
-                    directory: handle.name,
-                });
-                showMessage(this.t("directorySelected", { directory: handle.name }));
-            } catch (error) {
-                if (error?.name !== "AbortError") {
-                    showMessage(this.t("directorySelectFailed", { error: error.message }), 7000, "error");
+        for (const platform of ["windows", "macos"]) {
+            const row = document.createElement("div");
+            row.className = "siyuan-blog-publisher__directory-row";
+            const label = document.createElement("span");
+            label.className = "siyuan-blog-publisher__directory-platform";
+            label.textContent = this.t(platform === "windows" ? "platformWindows" : "platformMac")
+                + (platform === currentPlatform ? this.t("platformCurrentSuffix") : "");
+            const summary = document.createElement("span");
+            summary.className = "siyuan-blog-publisher__directory-summary";
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "b3-button b3-button--outline";
+            button.addEventListener("click", async () => {
+                button.disabled = true;
+                try {
+                    const handle = await directoryStore.chooseAndSave();
+                    const configKey = directoryNameConfigKey(directoryStore.platform);
+                    this.config[configKey] = handle.name;
+                    await this.saveConfig();
+                    await refreshDirectorySummary();
+                    showMessage(this.t("directorySelected", { directory: handle.name }));
+                } catch (error) {
+                    if (error?.name !== "AbortError") {
+                        showMessage(this.t("directorySelectFailed", { error: error.message }), 7000, "error");
+                    }
+                } finally {
+                    await refreshDirectorySummary();
                 }
-            } finally {
-                chooseDirectoryButton.disabled = false;
-            }
-        });
+            });
+            row.append(label, summary, button);
+            directoryRows.appendChild(row);
+            directoryControls.set(platform, { summary, button });
+        }
+        const directoryAction = document.createElement("div");
+        directoryAction.className = "siyuan-blog-publisher__setting-directories";
+        directoryAction.append(directoryRows);
+        await refreshDirectorySummary();
         const bridgeUrl = textField(this.config.bridgeUrl, "http://127.0.0.1:18765");
         const bridgeToken = textField(this.config.bridgeToken, this.t("bridgeTokenPlaceholder"));
         bridgeToken.type = "password";
@@ -713,6 +738,11 @@ class BlogPublisherPlugin extends Plugin {
             try {
                 const handle = await directoryStore.chooseAndSave();
                 state.directoryHandle = handle;
+                const configKey = directoryNameConfigKey(directoryStore.platform);
+                if (configKey) {
+                    this.config[configKey] = handle.name;
+                    await this.saveConfig();
+                }
                 state.outputError = "";
                 updateTarget();
                 state.scanning = false;
@@ -798,6 +828,12 @@ function formatLocalDate(date) {
 function localPathConfigKey(platform) {
     if (platform === "win32") return "localRootWindows";
     if (platform === "darwin") return "localRootMac";
+    return "";
+}
+
+function directoryNameConfigKey(platform) {
+    if (platform === "windows") return "directoryNameWindows";
+    if (platform === "macos") return "directoryNameMac";
     return "";
 }
 

@@ -8,6 +8,8 @@
 
 const DEFAULT_CONFIG = Object.freeze({
     notebookId: "",
+    directoryNameWindows: "",
+    directoryNameMac: "",
     localRootWindows: "",
     localRootMac: "",
     legacyLocalRoot: "",
@@ -27,6 +29,8 @@ function normalizeConfig(input) {
     const normalized = {
         ...DEFAULT_CONFIG,
         ...value,
+        directoryNameWindows: String(value.directoryNameWindows || "").trim(),
+        directoryNameMac: String(value.directoryNameMac || "").trim(),
         contentDir: normalizeRelativeDir(value.contentDir || DEFAULT_CONFIG.contentDir),
         assetDir: normalizeRelativeDir(value.assetDir || DEFAULT_CONFIG.assetDir),
         bridgeUrl: String(value.bridgeUrl || DEFAULT_CONFIG.bridgeUrl).replace(/\/$/, ""),
