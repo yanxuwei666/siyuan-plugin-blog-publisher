@@ -7,12 +7,13 @@ class SiyuanApi {
         this.fetch = fetchImpl || globalThis.fetch.bind(globalThis);
     }
 
-    async post(path, payload) {
+    async post(path, payload, signal) {
         const response = await this.fetch(path, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload || {}),
             credentials: "same-origin",
+            signal,
         });
         const text = await response.text();
         let body;
@@ -32,7 +33,7 @@ class SiyuanApi {
         return Array.isArray(data?.notebooks) ? data.notebooks : [];
     }
 
-    async listDocuments(notebookId) {
+    async listDocuments(notebookId, signal) {
         if (!/^[0-9]{14}-[a-z0-9]{7}$/i.test(String(notebookId || ""))) {
             throw new Error("发布笔记本 ID 无效，请从下拉列表选择笔记本。");
         }
@@ -41,27 +42,31 @@ class SiyuanApi {
             `FROM blocks WHERE box = '${notebookId}' AND type = 'd'`,
             "ORDER BY hpath, id LIMIT 10000",
         ].join(" ");
-        const data = await this.post("/api/query/sql", { stmt });
+        const data = await this.post("/api/query/sql", { stmt }, signal);
         return Array.isArray(data) ? data : [];
     }
 
-    async getDocumentMarkdown(id) {
-        const data = await this.post("/api/export/exportMdContent", { id });
+    async getDocumentMarkdown(id, signal) {
+        const data = await this.post("/api/export/exportMdContent", { id }, signal);
         return {
             hPath: data?.hPath || "",
             content: data?.content || "",
         };
     }
 
-    async getBlockAttrs(id) {
-        const data = await this.post("/api/attr/getBlockAttrs", { id });
+    async getBlockAttrs(id, signal) {
+        const data = await this.post("/api/attr/getBlockAttrs", { id }, signal);
         return data || {};
     }
 
-    async buildPlan(doc, config) {
+    async setBlockAttrs(id, attrs) {
+        await this.post("/api/attr/setBlockAttrs", { id, attrs });
+    }
+
+    async buildPlan(doc, config, manifestEntry, signal) {
         const [exported, attrs] = await Promise.all([
-            this.getDocumentMarkdown(doc.id),
-            this.getBlockAttrs(doc.id),
+            this.getDocumentMarkdown(doc.id, signal),
+            this.getBlockAttrs(doc.id, signal),
         ]);
         return createSyncPlan({
             sourceId: doc.id,
@@ -70,20 +75,33 @@ class SiyuanApi {
             markdown: exported.content,
             attrs,
             config,
+            existingSlug: manifestEntry?.slug,
+            existingPubDate: manifestEntry?.pubDate,
+            existingUpdatedDate: manifestEntry?.updatedDate,
             now: new Date().toISOString(),
             createdDate: doc.created,
             updatedDate: doc.updated,
         });
     }
 
-    async readAssetAsBase64(sourcePath) {
-        const normalized = String(sourcePath || "").split(/[?#]/)[0].replace(/^\/?/, "/");
-        const path = normalized.startsWith("/data/") ? normalized : `/data${normalized}`;
+    async readAssetAsBase64(sourcePath, signal) {
+        let decodedPath;
+        try {
+            decodedPath = decodeURIComponent(String(sourcePath || "").split(/[?#]/)[0]).replace(/\\/g, "/");
+        } catch (error) {
+            throw new Error(`图片资源路径编码无效：${sourcePath}`);
+        }
+        const segments = decodedPath.split("/").filter(Boolean);
+        if (segments[0]?.toLowerCase() !== "assets" || segments.some((part) => part === "." || part === ".." || /[\u0000-\u001f]/.test(part))) {
+            throw new Error(`拒绝读取博客资源目录之外的文件：${sourcePath}`);
+        }
+        const path = `/data/${segments.join("/")}`;
         const response = await this.fetch("/api/file/getFile", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ path }),
             credentials: "same-origin",
+            signal,
         });
         if (!response.ok) {
             throw new Error(`读取资源失败：${sourcePath}（HTTP ${response.status}）。`);

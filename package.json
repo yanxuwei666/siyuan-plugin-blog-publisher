@@ -1,12 +1,12 @@
 {
   "name": "siyuan-blog-publisher",
   "private": true,
-  "version": "0.1.1",
-  "description": "SiYuan plugin for publishing selected documents to a local blog repository",
+  "version": "0.2.1",
+  "description": "SiYuan plugin for publishing selected documents to local blog project directories on Windows and macOS",
   "scripts": {
-    "build": "esbuild src/index.js --bundle --platform=browser --format=cjs --external:siyuan --outfile=index.js --legal-comments=none",
+    "build": "esbuild src/index.js --bundle --platform=browser --format=cjs --external:siyuan --outfile=index.js --legal-comments=none && node scripts/package-plugin.js",
     "test": "node tests/blog-core.test.js",
-    "check": "node --check index.js && node --check src/index.js && node --check blog-core.js && node --check siyuan-api.js && node --check local-adapter.js && node --check local-bridge.js"
+    "check": "node --check index.js && node --check src/index.js && node --check blog-core.js && node --check siyuan-api.js && node --check local-adapter.js && node --check local-bridge.js && node --check scripts/package-plugin.js"
   },
   "devDependencies": {
     "esbuild": "^0.25.9"

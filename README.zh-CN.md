@@ -2,96 +2,69 @@
 
 # 思源博客发布器
 
-将思源笔记中选定笔记本的文档转换为 Astro 博客 Markdown，并同步到本地博客 Git 仓库。
+将思源笔记中选定笔记本的文档转换为 Astro 博客 Markdown，并同步到本地博客项目目录。插件不创建 Git 提交，也不推送远端；文件同步完成后，请在博客项目自己的代码目录中按原有 Git 流程提交和推送。
 
-当前版本是第一版本地目录适配器：插件负责扫描、转换和生成同步计划；一个只监听 `127.0.0.1` 的本地 Bridge 负责向 `my-blog` 写入文件。GitHub API 同步放在第二版。
+## 功能
 
-## 当前功能
+- 选择笔记本并扫描其中的文档。
+- 读取思源自定义属性中的发布状态、分类、标签、slug、发布日期和描述。
+- 维护分类清单，支持逐篇或批量设置分类。
+- 生成 Astro Content Collection frontmatter 和稳定 slug。
+- 将 `/assets/...` 资源复制到配置的公开资源目录，并重写 Markdown 链接。
+- 预览 Markdown、显示转换警告、批量选择并同步到本地。
+- 维护 `.siyuan-sync.json`；内容未变化时跳过，检测到目标文件被手动修改时提示冲突。
+- 首次同步日期作为 `pubDate`；文档之后有内容改动时写入 `updatedDate`。
+- 思源文档改名后仍更新原有目标文件。
+- 思源文档删除后不会自动删除博客文件。
 
-- 选择发布笔记本并扫描文档。
-- 读取 `blog.status`、`blog.category`、`blog.tags`、`blog.slug`、`blog.pubDate` 和 `blog.description` 属性。
-- 生成 Astro Content Collection frontmatter。
-- 中文标题生成稳定 slug；同一文档使用 `siyuanId` 作为来源标识。
-- 复制 `/assets/...` 图片到 `public/images/blog/<slug>/`，并重写 Markdown 引用。
-- 预览 Markdown、显示警告、批量选择和同步。
-- 维护 `.siyuan-sync.json`，重复同步会跳过，检测到博客文件被手动修改会阻止覆盖。
-- 不会因为思源删除文档而自动删除博客文件。
+## 本地设置
 
-## 使用方式
+在存放博客项目的电脑上启动 Bridge：
 
-### 1. 启动本地 Bridge
-
-在插件目录执行：
-
-```powershell
+```sh
 node local-bridge.js
 ```
 
-默认地址是 `http://127.0.0.1:18765`。需要换端口时：
+首次启动会生成并显示访问令牌。将它填入插件设置中的“Bridge 访问令牌”。令牌保存在 `~/.siyuan-blog-publisher/bridge-token`（Windows：`%USERPROFILE%\.siyuan-blog-publisher\bridge-token`）；Bridge 只监听 `http://127.0.0.1:18765`。
 
-```powershell
-node local-bridge.js --port 18766
-```
+插件设置中分别填写 **Windows 博客项目路径**和 **macOS 博客项目路径**。扫描或同步时，插件会读取 Bridge 所在电脑的系统类型并自动选用对应路径。例如 Windows 填 `D:\Code\personal\my-blog`，macOS 填 `~/Code/personal/my-blog`。思源、Bridge 和当前使用的博客项目目录必须在同一台电脑上可访问。
 
-### 2. 配置插件
+在发布中心扫描文档、检查 Markdown 后点击“同步到本地仓库”。之后请在博客项目自己的代码目录中，使用原有 Git 客户端或终端进行提交和推送。
 
-打开思源插件设置，填写：
+更新到 0.2.1 后，请停止旧 Bridge 进程，再运行 `node local-bridge.js` 启动新版本。设置页的“检查 Bridge”会同时验证版本、系统类型和访问令牌。
 
-- 发布笔记本：要扫描的笔记本。
-- 本地博客仓库路径：本地 `my-blog` Git 仓库根目录，例如 `E:\projects\my-blog`。
-- 博客内容目录：默认 `src/content/blog`。
-- 博客资源目录：默认 `public/images/blog`。
-- Bridge 地址：默认 `http://127.0.0.1:18765`。
-
-然后打开顶部的“博客发布中心”，扫描并同步。
-
-### 3. 文档属性
-
-思源自定义属性可以使用下面的名字：
+## 文档属性
 
 ```text
 blog.status      = pending | published | draft | archived
-blog.category    = 工程实践
-blog.tags        = redis, cache, backend
+custom-blog-category = 工程实践
+blog.tags        = AI, Debian, Linux
 blog.slug        = redis-cache-penetration
 blog.pubDate     = 2026-09-22
 blog.description = 从现象、定位到修复缓存击穿问题。
 ```
 
-`draft` 和 `archived` 不会被选中同步；没有设置 `blog.slug` 时，插件会根据标题生成稳定 slug。纯中文标题会生成 `post-xxxxxxxx` 形式的 ASCII 文件名。
+没有设置分类时，插件会使用导出 Markdown 中已有的分类，再回退到设置页的默认分类。`draft` 和 `archived` 不会被选中同步。
 
-## 开发与验证
+## 开发与构建
 
-插件源码在 `src/index.js`，思源实际加载根目录下的单文件 `index.js`。修改源码后先重新打包，再重新加载插件：
+源码在 `src/index.js`，思源实际加载根目录下的 `index.js`。运行 `npm run build` 会重新生成入口文件和思源插件发布包 `package.zip`：
 
-```powershell
+```sh
 npm install
 npm run build
-npm test
 npm run check
-```
-
-`tests/blog-core.test.js` 覆盖 slug、frontmatter、资源路径和稳定 hash；开发时也可以用一个临时目录向 Bridge 发送同步计划，验证实际写入、同步清单以及第二次 `skip` 行为。
-
-## 目录说明
-
-```text
-index.js          思源插件入口、设置页和发布中心
-blog-core.js      与输出方式无关的转换器和 SyncPlan
-siyuan-api.js     思源文档、属性、Markdown 和资源读取
-local-adapter.js  第一版本地 Bridge 适配器
-local-bridge.js   本地文件写入服务
-docs/             产品和第二版 GitHub 适配器设计
 ```
 
 ## 注意事项
 
-- Bridge 只绑定本机回环地址，不要把端口暴露到局域网或公网。
-- 同步前请确认填写的是博客仓库根目录，不是 `src/content/blog` 子目录。
-- 目标文件如果不是本插件上次写入的版本，会显示冲突并停止整批同步，不会静默覆盖。
-- 第一版不会自动执行 `git add`、`commit` 或 `push`。
+- Bridge 只绑定本机回环地址并要求随机令牌；不要把端口暴露到局域网或公网，也不要分享令牌。
+- Windows 与 macOS 路径必须分别填写各自电脑上的博客项目根目录，而不是 `src/content/blog` 子目录。
+- 目前自动选路支持 Windows 和 macOS；如果 Bridge 在 Linux 上运行，插件会提示暂不支持。
+- 目标文件如果不是插件上次写入的版本，会提示冲突，不会静默覆盖。
+- Bridge 连接失败时，先确认它运行在当前电脑、地址端口为 `http://127.0.0.1:18765`，并且插件中填写了正确令牌。
 
 ## 参考
 
 - [思源笔记 API](https://github.com/siyuan-note/siyuan/blob/master/docs/API.zh-CN.md)
-- [第一版需求与第二版设计](docs/siyuan-blog-publisher-plugin.md)
+- [思源插件开发规范](https://github.com/siyuan-note/plugin-sample)

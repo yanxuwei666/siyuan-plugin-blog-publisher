@@ -2,42 +2,43 @@
 
 # SiYuan Blog Publisher
 
-Publish selected SiYuan documents as Astro blog Markdown and sync them to a local Git repository.
-
-Version 0.1 uses a localhost adapter: the plugin scans and converts documents, while `local-bridge.js` writes the sync plan into the configured `my-blog` repository. GitHub API synchronization is planned for v0.2.
+Convert selected SiYuan documents to Astro blog Markdown and sync them into the local blog project directory. The plugin does not create Git commits or push to a remote repository; use the blog project's own Git workflow from that project's code directory.
 
 ## Features
 
 - Select a notebook and scan its documents.
-- Read `blog.status`, `blog.category`, `blog.tags`, `blog.slug`, `blog.pubDate`, and `blog.description` attributes.
-- Generate Astro Content Collection frontmatter.
-- Generate stable slugs, preserving `siyuanId` as the source identity.
-- Copy `/assets/...` references to `public/images/blog/<slug>/` and rewrite Markdown URLs.
-- Preview Markdown, show conversion warnings, select documents in batches, and sync them.
+- Read SiYuan custom attributes for status, category, tags, slug, publication date, and description.
+- Maintain an editable category list and assign categories per post or in bulk.
+- Generate Astro Content Collection frontmatter and stable slugs.
+- Copy `/assets/...` references to the configured public asset directory and rewrite Markdown URLs.
+- Preview Markdown, show conversion warnings, select documents in batches, and sync them locally.
 - Maintain `.siyuan-sync.json`; unchanged documents are skipped and manually edited blog files cause a conflict.
+- Keep the first sync date as `pubDate`; add `updatedDate` after a later content change.
+- Reuse the same output file when a SiYuan document is renamed.
 - Never delete blog files when a SiYuan document is deleted.
 
 ## Local setup
 
-Start the bridge from this directory:
+Start the Bridge on the computer that has the blog project directory:
 
-```powershell
+```sh
 node local-bridge.js
 ```
 
-The default address is `http://127.0.0.1:18765`. Configure the notebook, local repository root, content directory, asset directory, and bridge URL in the plugin settings. Open the “Blog Publisher” top-bar button to scan and sync.
+On first start, the Bridge generates and prints an access token. Paste it into the plugin's “Bridge access token” setting. The token is stored in `~/.siyuan-blog-publisher/bridge-token` (Windows: `%USERPROFILE%\.siyuan-blog-publisher\bridge-token`); the Bridge listens only on `http://127.0.0.1:18765`.
 
-The first version does not run `git add`, `commit`, or `push` automatically.
+In plugin settings, configure both the Windows blog project path and the macOS blog project path. The Bridge reports its operating system, and the plugin automatically selects the matching path when scanning or syncing. For example, enter `D:\Code\personal\my-blog` for Windows and `~/Code/personal/my-blog` for macOS. SiYuan and Bridge must be able to access the same project directory on the computer in use.
+
+In the publisher, scan documents, review the generated Markdown, and click “Sync to local repository”. Commit and push the resulting files separately from the blog project's own code directory with your usual Git client or terminal.
 
 ## Development
 
-The source lives in `src/index.js`; SiYuan loads the self-contained root `index.js`. Rebuild after source changes:
+The source lives in `src/index.js`; SiYuan loads the self-contained root `index.js`. `npm run build` regenerates the entry file and the SiYuan plugin archive `package.zip`:
 
-```powershell
+```sh
 npm install
 npm run build
-npm test
 npm run check
 ```
 
-See [README.zh-CN.md](README.zh-CN.md) for the full Chinese usage guide and [docs/siyuan-blog-publisher-plugin.md](docs/siyuan-blog-publisher-plugin.md) for the product design and v0.2 GitHub adapter plan.
+See [README.zh-CN.md](README.zh-CN.md) for the full Chinese usage guide and [docs/siyuan-blog-publisher-plugin.md](docs/siyuan-blog-publisher-plugin.md) for the product and sync-flow design.

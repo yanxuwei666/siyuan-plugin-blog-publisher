@@ -1,16 +1,29 @@
 "use strict";
 
 class LocalAdapter {
-    constructor(baseUrl) {
+    constructor(baseUrl, token = "") {
         this.baseUrl = String(baseUrl || "http://127.0.0.1:18765").replace(/\/$/, "");
+        this.token = String(token || "").trim();
     }
 
-    async request(path, method, payload) {
-        const response = await fetch(`${this.baseUrl}${path}`, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: payload === undefined ? undefined : JSON.stringify(payload),
-        });
+    async request(path, method, payload, signal) {
+        let response;
+        try {
+            response = await fetch(`${this.baseUrl}${path}`, {
+                method,
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+                },
+                body: payload === undefined ? undefined : JSON.stringify(payload),
+                signal,
+            });
+        } catch (error) {
+            const detail = error?.message ? `（${error.message}）` : "";
+            throw new Error(
+                `无法连接本地 Bridge：${this.baseUrl}。请在运行思源的这台电脑上启动 Bridge（在插件目录运行 node local-bridge.js），并确认端口与此地址一致。${detail}`,
+            );
+        }
         const text = await response.text();
         let data;
         try {
@@ -24,26 +37,31 @@ class LocalAdapter {
         return data;
     }
 
-    async health() {
-        return this.request("/health", "GET");
+    async health(signal) {
+        return this.request("/health", "GET", undefined, signal);
     }
 
-    async status(rootPath) {
-        return this.request("/status", "POST", { rootPath });
+    async authenticate(signal) {
+        return this.request("/auth", "POST", {}, signal);
     }
 
-    async preview(rootPath, plans) {
-        return this.request("/preview", "POST", { rootPath, plans });
+    async status(rootPath, signal) {
+        return this.request("/status", "POST", { rootPath }, signal);
     }
 
-    async apply(rootPath, contentDir, assetDir, plans) {
+    async preview(rootPath, plans, signal) {
+        return this.request("/preview", "POST", { rootPath, plans }, signal);
+    }
+
+    async apply(rootPath, contentDir, assetDir, plans, signal) {
         return this.request("/sync", "POST", {
             rootPath,
             contentDir,
             assetDir,
             plans,
-        });
+        }, signal);
     }
+
 }
 
 module.exports = { LocalAdapter };

@@ -1,6 +1,6 @@
 # 思源博客发布器插件开发文档
 
-> 文档状态：Draft v0.1  
+> 文档状态：实现说明 v0.2.1  
 > 推荐插件名称：思源博客发布器  
 > 推荐插件 ID：`siyuan-blog-publisher`  
 > 推荐代码仓库名：`siyuan-plugin-blog-publisher`
@@ -17,7 +17,7 @@
 - 文档来源、slug 和内容 hash
 - 同步清单和同步结果
 
-第一版先输出到指定的本地博客目录，方便反复测试转换效果；第二版增加 GitHub 提交适配器，让同步结果可以直接生成一次 Git commit。
+插件通过本机 Bridge 将选中的文档和资源同步到博客项目目录。Windows 与 macOS 路径分别配置，Bridge 报告运行系统后由插件自动选用对应路径。插件不执行 Git 提交或远端推送；同步后的文件由用户在博客项目代码目录中按既有流程提交。
 
 ## 2. 名称建议
 
@@ -34,7 +34,7 @@
 
 不建议使用 `sync-astro-github-cloudflare` 作为正式名称，原因是：
 
-- GitHub 是传输目标，不一定永远是唯一目标；
+- 插件不绑定博客仓库的托管平台；
 - Astro 是当前博客技术栈，未来可能更换；
 - Cloudflare 是部署平台，不应该成为内容同步插件的职责；
 - 名称过长，不利于插件菜单、仓库和发布市场展示。
@@ -67,59 +67,42 @@
 重复检查 / 冲突检查
    ↓
 SyncPlan
-   ├─ LocalAdapter：写入本地博客目录
-   └─ GitHubAdapter：创建一次 Git commit
+   └─ LocalAdapter：经本机 Bridge 写入当前电脑对应的博客项目目录
+      └─ 更新 .siyuan-sync.json 并返回同步结果
 ```
 
-核心转换逻辑必须与输出方式解耦。第一版和第二版只替换 Adapter，不重复实现文档转换、重复校验和资源处理。
+核心转换逻辑与本地文件写入解耦。转换由插件完成；Bridge 只处理本机文件，不重复实现文档转换、重复校验和资源处理。
 
-## 4. 第一版与第二版范围
+## 4. 当前版本范围
 
-### 第一版：本地目录同步
+### Windows 与 macOS 本地同步
 
-目标是验证“思源文档是否能稳定转换为博客内容”。
+当前版本支持：
 
-包含：
+- 配置发布笔记本并扫描其中的文档；
+- 导出为 Markdown，生成 Astro frontmatter 和稳定 slug；
+- 转换图片和附件路径并复制资源；
+- 维护分类清单，并逐篇或批量设置分类；
+- 预览转换结果、警告和目标路径；
+- 经本机 Bridge 写入博客项目目录并更新同步清单；
+- 根据首次同步日期生成 `pubDate`，后续内容变化时更新 `updatedDate`；
+- 通过同步清单识别同一思源文档，改名后继续更新原有文件；
+- 检测目标文件冲突，避免覆盖用户手动改动的内容。
 
-- 配置默认发布笔记本；
-- 扫描笔记本下的文档；
-- 批量选择待发布文档；
-- 导出为 Markdown；
-- 生成 Astro frontmatter；
-- 转换图片和附件路径；
-- 写入指定本地博客目录；
-- 重复检查；
-- 生成同步清单；
-- 预览同步计划和错误信息。
+Bridge 的 `/health` 接口返回运行平台。插件据此选择 Windows 或 macOS 路径。插件只负责本地文件同步，不调用 Git，不创建提交，也不访问 GitHub。需要提交和推送时，请在博客项目的代码目录中使用现有 Git 工作流。
 
-不包含：
+暂不支持：
 
-- GitHub Token 管理；
-- GitHub API；
-- 自动提交；
+- Linux 自动路径配置；
 - 自动删除博客文件；
-- 后台监听每次编辑并立即同步。
+- 后台监听每次编辑并立即同步；
+- 在插件内创建 Git 提交或推送远端。
 
-### 第二版：GitHub 同步
+## 5. 本地目录访问
 
-在第一版的 `SyncPlan` 基础上增加：
+思源插件运行在前端环境中，不能假设可以直接使用 Node.js 的 `fs` 写入任意电脑目录。思源官方建议通过内核文件 API 访问工作区文件；`/api/file/putFile` 的路径范围也是思源工作区内的路径。当前版本通过本机 Bridge 访问指定的博客项目目录：
 
-- GitHub 仓库和分支配置；
-- GitHub Token 配置；
-- 远程文件读取；
-- 远程 hash 和 commit 冲突检查；
-- Markdown 和图片批量上传；
-- 一次同步生成一个 commit；
-- 返回 commit URL；
-- GitHub Actions 触发博客构建和部署。
-
-## 5. 本地目录模式的实现说明
-
-思源插件运行在前端环境中，不能假设可以直接使用 Node.js 的 `fs` 写入任意电脑目录。思源官方建议通过内核文件 API 访问工作区文件；`/api/file/putFile` 的路径范围也是思源工作区内的路径。
-
-因此，第一版的“指定本地博客目录”建议采用下面两种实现中的一种：
-
-### 推荐：本地 Bridge
+### 本机 Bridge
 
 插件负责：
 
@@ -134,15 +117,9 @@ SyncPlan
 3. 更新 `.siyuan-sync.json`；
 4. 返回写入结果。
 
-Bridge 可以是一个很小的 Node.js 程序，第一版只需要支持本机运行，不需要公网服务。
+Bridge 是一个本机运行的 Node.js 程序，只监听回环地址，不需要公网服务。版本 3 的健康检查会报告 `process.platform`，供插件选择已配置的系统路径。
 
-### 备选：桌面端文件选择器
-
-如果目标运行环境确认是桌面端 Chromium，可以尝试通过目录选择器获得目标目录权限。但这需要处理权限持久化、浏览器兼容和插件重启后的授权状态，因此不作为第一版的唯一实现方式。
-
-### 不推荐
-
-不要在插件前端中直接依赖 `fs`、`child_process` 或 Electron 私有 API。这样会导致桌面端、移动端和未来思源版本之间的兼容性很差。
+插件前端不直接依赖 `fs`、`child_process` 或 Electron 私有 API；Bridge 为桌面端和浏览器前端提供统一的本地文件写入接口。
 
 ## 6. 用户操作流程
 
@@ -151,13 +128,14 @@ Bridge 可以是一个很小的 Node.js 程序，第一版只需要支持本机�
 设置页面包含：
 
 - 发布笔记本；
-- 本地博客目录；
+- Windows 博客项目根目录；
+- macOS 博客项目根目录；
 - 博客内容目录，默认 `src/content/blog`；
 - 博客资源目录，默认 `public/images/blog`；
 - 是否保留文档标题作为正文一级标题；
 - 默认分类；
-- 默认发布时间规则；
-- Bridge 地址和端口。
+- 分类清单与默认分类；
+- Bridge 地址和访问令牌；端口默认 `18765`。
 
 ### 6.2 发布中心
 
@@ -205,7 +183,7 @@ blog.pubDate  = 2026-09-22
 | --- | --- |
 | `draft` | 只在思源中保存，不进入同步列表 |
 | `pending` | 等待用户选择或发布 |
-| `published` | 已经成功写入博客目录或 GitHub |
+| `published` | 已经成功写入博客项目目录 |
 | `archived` | 已下线，不再更新博客内容 |
 
 ## 7. 博客格式转换规则
@@ -247,17 +225,17 @@ sourceHash: "sha256:..."
 | --- | --- |
 | 文档标题 | `title` |
 | 首段摘要或 `blog.description` | `description` |
-| `blog.pubDate` 或首次发布日 | `pubDate` |
-| 本次同步时间 | `updatedDate` |
+| `blog.pubDate` 或首次同步日 | `pubDate` |
+| 后续内容变化后的同步日期 | `updatedDate`（首次同步时省略） |
 | `blog.category` | `category` |
-| `blog.tags` | `tags` |
+| `blog.tags` 或思源导出元数据 `tags` | `tags` |
 | `blog.status` | `draft` |
 | 思源文档 ID | `siyuanId` |
 | 转换后内容 hash | `sourceHash` |
 
 ### 7.3 正文标题
 
-默认不在 Markdown 正文中重复生成文档标题，因为 Astro 页面通常已经单独渲染标题。
+思源 Markdown 导出可能自带 YAML frontmatter；同步器会提取其中的标签和分类，并从正文移除整段源 frontmatter，避免它作为普通文本显示。默认也会移除与文档标题相同的首个一级标题，因为 Astro 页面通常已经单独渲染标题。
 
 插件设置中可以提供：
 
@@ -267,7 +245,11 @@ sourceHash: "sha256:..."
 
 默认关闭。
 
-### 7.4 图片和附件
+### 7.4 分类
+
+插件设置使用逐项编辑的分类清单，可添加或删除分类；发布中心为每篇文章提供单选分类，并支持对勾选文章批量应用。选择立即写回思源文档的 `custom-blog-category` 属性，确保后续扫描仍使用相同分类。分类清单应与目标博客保持一致；“未分类”作为系统回退项，不要求加入清单。
+
+### 7.5 图片和附件
 
 思源中的资源引用需要被转换为博客仓库的相对路径：
 
@@ -327,15 +309,9 @@ sourceHash: "sha256:..."
 - 目标路径超出允许目录；
 - 目标路径包含 `..` 或绝对路径。
 
-### 8.4 远程冲突校验
+### 8.4 本地文件冲突校验
 
-第二版需要记录：
-
-- 上次同步时的 Git commit；
-- 上次同步文件的 blob SHA；
-- 上次生成的内容 hash。
-
-如果仓库文件已经被手动修改，插件应显示“远程冲突”，不能默认覆盖。
+本地同步清单记录上次同步的目标路径和内容 hash。再次同步前，Bridge 会检查目标文件是否仍与上次同步版本一致；如果用户在博客项目中手动修改了文件，插件会报告冲突并停止写入。当前版本不检查 Git 分支或远端状态。
 
 ## 9. 同步清单
 
@@ -356,9 +332,9 @@ sourceHash: "sha256:..."
       "path": "src/content/blog/redis-cache-penetration.md",
       "assetDir": "public/images/blog/redis-cache-penetration",
       "slug": "redis-cache-penetration",
+      "pubDate": "2026-09-22",
       "sourceHash": "sha256:...",
-      "lastSyncAt": "2026-09-22T10:00:00.000Z",
-      "lastCommit": null
+      "lastSyncAt": "2026-09-22T10:00:00.000Z"
     }
   }
 }
@@ -368,13 +344,14 @@ sourceHash: "sha256:..."
 
 ## 10. SyncPlan 数据结构
 
-转换器不直接写磁盘或调用 GitHub，而是输出统一的同步计划：
+转换器不直接写磁盘，而是输出统一的同步计划：
 
 ```ts
 interface SyncPlan {
   sourceId: string;
   sourcePath: string;
   title: string;
+  pubDate: string;
   targetPath: string;
   content: string;
   sourceHash: string;
@@ -400,31 +377,23 @@ interface SyncAdapter {
 }
 ```
 
-## 11. 第二版 GitHub 提交策略
+## 11. 本地同步与代码提交的边界
 
-第二版不建议逐个调用文件 Contents API，因为一批文章和图片会产生很多独立 commit。
-
-推荐流程：
+同步计划经 Bridge 写入当前电脑上配置的博客项目目录：
 
 ```text
-读取目标分支 HEAD
+Bridge 查询当前运行平台
   ↓
-创建或复用 blobs
+插件选择 Windows 或 macOS 对应路径
   ↓
-创建 tree
+检查同步清单、目标文件和资源的 hash
   ↓
-创建 commit
+写入 Markdown、资源及 .siyuan-sync.json
   ↓
-更新 refs/heads/<branch>
+用户在博客项目代码目录中按既有流程提交和推送
 ```
 
-结果是一批内容对应一个 commit，例如：
-
-```text
-publish: sync 3 SiYuan documents
-```
-
-GitHub Token 最小权限使用目标仓库的 `Contents: write`。Token 不写入思源文档、Markdown 文件或同步清单。
+Bridge 仅提供 `/auth`、`/status`、`/preview` 和 `/sync` 接口，不执行 Git 命令，也不接收 GitHub 地址或令牌。Windows 和 macOS 路径都保存在插件设置中；老版本的单一路径配置会在首次检测到 Bridge 平台后迁移到对应字段。
 
 ## 12. 当前博客项目需要的改动
 
@@ -473,17 +442,16 @@ sourceHash: z.string().optional(),
 - 更新同步清单；
 - 支持重复同步跳过。
 
-### Milestone 4：GitHub Adapter
+### 当前版本：跨平台本地同步
 
-- 配置仓库、分支和 Token；
-- 读取远程分支；
-- 批量生成 Git tree 和 commit；
-- 处理远程冲突；
-- 返回 commit URL。
+- 分别配置 Windows 与 macOS 博客项目根目录；
+- Bridge 返回当前操作系统，插件自动选择对应路径；
+- 只通过本机 Bridge 同步文件，不在插件中调用 Git 或 GitHub；
+- 由用户在博客项目的代码目录中自行提交和推送。
 
-## 14. 第一版验收标准
+## 14. 同步验收标准
 
-完成以下测试后，第一版才算可用：
+以下标准用于检查当前同步流程：
 
 - 可以扫描指定笔记本；
 - 可以批量选择文档；
@@ -503,6 +471,3 @@ sourceHash: z.string().optional(),
 
 - [思源笔记 API 文档](https://github.com/siyuan-note/siyuan/blob/master/docs/API.md)
 - [思源笔记插件示例](https://github.com/siyuan-note/plugin-sample)
-- [GitHub Repository Contents API](https://docs.github.com/en/rest/repos/contents)
-- [GitHub Git Trees API](https://docs.github.com/en/rest/git/trees)
-- [GitHub Git References API](https://docs.github.com/en/rest/git/refs)

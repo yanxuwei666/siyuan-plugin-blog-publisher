@@ -2,35 +2,54 @@
 
 /**
  * The format/conversion part of the publisher. This file intentionally does
- * not depend on SiYuan or Node APIs so it can also be reused by the GitHub
- * adapter in the next version.
+ * not depend on SiYuan or Node APIs so it can be reused by the local Bridge
+ * and any future output adapter.
  */
 
 const DEFAULT_CONFIG = Object.freeze({
     notebookId: "",
-    localRoot: "",
+    localRootWindows: "",
+    localRootMac: "",
+    legacyLocalRoot: "",
     contentDir: "src/content/blog",
     assetDir: "public/images/blog",
     bridgeUrl: "http://127.0.0.1:18765",
+    bridgeToken: "",
     includeTitle: false,
     defaultCategory: "",
+    categories: ["工程实践", "后端框架", "数据库技术", "工程基础设施", "前端应用", "中间件", "随笔"],
 });
 
 const VALID_STATUSES = new Set(["draft", "pending", "published", "archived"]);
 
 function normalizeConfig(input) {
     const value = input || {};
-    return {
+    const normalized = {
         ...DEFAULT_CONFIG,
         ...value,
         contentDir: normalizeRelativeDir(value.contentDir || DEFAULT_CONFIG.contentDir),
         assetDir: normalizeRelativeDir(value.assetDir || DEFAULT_CONFIG.assetDir),
         bridgeUrl: String(value.bridgeUrl || DEFAULT_CONFIG.bridgeUrl).replace(/\/$/, ""),
-        localRoot: String(value.localRoot || "").trim(),
+        bridgeToken: String(value.bridgeToken || "").trim(),
+        localRootWindows: String(value.localRootWindows || "").trim(),
+        localRootMac: String(value.localRootMac || "").trim(),
+        legacyLocalRoot: String(value.legacyLocalRoot || value.localRoot || "").trim(),
         notebookId: String(value.notebookId || "").trim(),
         includeTitle: Boolean(value.includeTitle),
         defaultCategory: String(value.defaultCategory || "").trim(),
+        categories: normalizeCategories(value.categories ?? DEFAULT_CONFIG.categories),
     };
+    delete normalized.localRoot;
+    delete normalized.githubUrl;
+    return normalized;
+}
+
+function normalizeCategories(value) {
+    const items = Array.isArray(value) ? value : String(value || "").split(/[\n\r]+/);
+    return items
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+        .filter((item, index, values) => values.indexOf(item) === index);
 }
 
 function normalizeRelativeDir(value) {
@@ -99,7 +118,8 @@ function readAttribute(attrs, name) {
     if (!attrs || typeof attrs !== "object") {
         return "";
     }
-    const candidates = [name, `custom-${name}`, name.replace(/^blog\./, "blog-")];
+    const siYuanCustomName = `custom-${name.replace(/\./g, "-").toLowerCase()}`;
+    const candidates = [name, siYuanCustomName, name.replace(/^blog\./, "blog-")];
     for (const key of candidates) {
         if (Object.prototype.hasOwnProperty.call(attrs, key) && attrs[key] !== null && attrs[key] !== undefined) {
             return String(attrs[key]).trim();
@@ -110,7 +130,8 @@ function readAttribute(attrs, name) {
 
 function parseTags(value) {
     if (Array.isArray(value)) {
-        return value.map((item) => String(item).trim()).filter(Boolean);
+        return value.map((item) => String(item).trim()).filter(Boolean)
+            .filter((item, index, items) => items.indexOf(item) === index);
     }
     const raw = String(value || "").trim();
     if (raw.startsWith("[")) {
@@ -124,10 +145,126 @@ function parseTags(value) {
         }
     }
     return raw
-        .split(/[\n,，、;；\s]+/)
+        .split(/[\n,，、;；]+/)
         .map((item) => item.trim().replace(/^#/, ""))
         .filter(Boolean)
         .filter((item, index, items) => items.indexOf(item) === index);
+}
+
+function parseYamlScalar(value) {
+    const raw = String(value || "").trim();
+    if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+        try {
+            return JSON.parse(raw);
+        } catch (error) {
+            return raw.slice(1, -1);
+        }
+    }
+    if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) {
+        return raw.slice(1, -1).replace(/''/g, "'");
+    }
+    return raw;
+}
+
+function splitYamlArray(value) {
+    const raw = String(value || "").trim();
+    if (!raw.startsWith("[") || !raw.endsWith("]")) {
+        return [];
+    }
+    const items = [];
+    let token = "";
+    let quote = "";
+    let escaped = false;
+    for (const character of raw.slice(1, -1)) {
+        if (escaped) {
+            token += character;
+            escaped = false;
+        } else if (character === "\\" && quote === '"') {
+            token += character;
+            escaped = true;
+        } else if ((character === "'" || character === '"') && (!quote || quote === character)) {
+            token += character;
+            quote = quote ? "" : character;
+        } else if (character === "," && !quote) {
+            if (token.trim()) items.push(parseYamlScalar(token));
+            token = "";
+        } else {
+            token += character;
+        }
+    }
+    if (token.trim()) items.push(parseYamlScalar(token));
+    return items;
+}
+
+function parseExportedMetadata(value) {
+    const lines = String(value || "").split(/\r?\n/);
+    const metadata = { category: "", description: "", tags: [] };
+    for (let index = 0; index < lines.length; index += 1) {
+        const match = lines[index].match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/);
+        if (!match) continue;
+        const key = match[1].toLowerCase();
+        const inlineValue = match[2].trim();
+        if (key === "category" || key === "description") {
+            metadata[key] = parseYamlScalar(inlineValue);
+        } else if (key === "tags") {
+            if (inlineValue.startsWith("[")) {
+                metadata.tags = splitYamlArray(inlineValue);
+            } else if (inlineValue) {
+                metadata.tags = parseTags(parseYamlScalar(inlineValue));
+            } else {
+                for (let next = index + 1; next < lines.length; next += 1) {
+                    const listItem = lines[next].match(/^\s+-\s*(.*?)\s*$/);
+                    if (listItem) {
+                        metadata.tags.push(parseYamlScalar(listItem[1]));
+                    } else if (lines[next].trim() && !/^\s/.test(lines[next])) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    metadata.tags = parseTags(metadata.tags);
+    return metadata;
+}
+
+function stripExportedFrontmatter(markdown) {
+    const source = String(markdown || "").replace(/^\uFEFF/, "");
+    const lines = source.split(/\r?\n/);
+    if (lines[0]?.trim() !== "---") {
+        return { body: source, category: "", description: "", tags: [] };
+    }
+    const closingIndex = lines.findIndex((line, index) => index > 0 && /^(?:---|\.\.\.)\s*$/.test(line.trim()));
+    if (closingIndex < 0) {
+        return { body: source, category: "", description: "", tags: [] };
+    }
+    return {
+        ...parseExportedMetadata(lines.slice(1, closingIndex).join("\n")),
+        body: lines.slice(closingIndex + 1).join("\n").replace(/^(?:\r?\n)+/, ""),
+    };
+}
+
+function sameTitle(left, right) {
+    const normalize = (value) => stripMarkdown(value).normalize("NFC").toLocaleLowerCase().replace(/\s+/g, " ").trim();
+    return normalize(left) === normalize(right);
+}
+
+function applyTitleToBody(markdown, title, includeTitle) {
+    const lines = String(markdown || "").split("\n");
+    let firstContentLine = 0;
+    while (firstContentLine < lines.length && !lines[firstContentLine].trim()) firstContentLine += 1;
+    const heading = lines[firstContentLine]?.trim().match(/^#\s+(.+?)\s*#*\s*$/);
+    const alreadyHasTitle = Boolean(heading && sameTitle(heading[1], title));
+    if (alreadyHasTitle && !includeTitle) {
+        lines.splice(firstContentLine, 1);
+        while (firstContentLine < lines.length && !lines[firstContentLine].trim()) {
+            lines.splice(firstContentLine, 1);
+        }
+        return lines.join("\n");
+    }
+    if (includeTitle && !alreadyHasTitle) {
+        return `# ${title}\n\n${String(markdown || "").trimStart()}`;
+    }
+    return String(markdown || "");
 }
 
 function normalizeStatus(value) {
@@ -187,7 +324,7 @@ function buildFrontmatter({ title, description, pubDate, updatedDate, category, 
         `title: ${quote(title)}`,
         `description: ${quote(description)}`,
         `pubDate: ${pubDate}`,
-        `updatedDate: ${updatedDate}`,
+        ...(updatedDate ? [`updatedDate: ${updatedDate}`] : []),
         `category: ${quote(category)}`,
         `tags: ${tagValue}`,
         `draft: ${draft ? "true" : "false"}`,
@@ -218,19 +355,34 @@ function findWarnings(markdown, assetRefs) {
     return warnings;
 }
 
-function createBlogDocument({ sourceId, sourcePath, title, markdown, attrs, config, now, createdDate, updatedDate }) {
+function createBlogDocument({ sourceId, sourcePath, title, markdown, attrs, config, now, createdDate, updatedDate, existingSlug, existingPubDate, existingUpdatedDate }) {
     const normalizedConfig = normalizeConfig(config);
-    const publishDate = normalizeDate(readAttribute(attrs, "blog.pubDate"), normalizeDate(createdDate || now, today()));
-    const effectiveUpdatedDate = normalizeDate(updatedDate || now, today());
+    const exported = stripExportedFrontmatter(markdown);
+    const sourceMarkdown = exported.body;
+    const explicitPubDate = readAttribute(attrs, "blog.pubDate");
+    const publishDate = normalizeDate(
+        explicitPubDate,
+        normalizeDate(existingPubDate || now || createdDate, today()),
+    );
+    const pinPubDateOnSync = !explicitPubDate && !existingPubDate;
+    const firstPush = !existingPubDate;
+    const sourceUpdatedDate = normalizeDate(updatedDate || now, today());
+    // Keep updatedDate absent on first push. For an existing article, preserve
+    // its previous value in previews; the publisher stamps the next sync date.
+    const effectiveUpdatedDate = existingPubDate ? String(existingUpdatedDate || "") : "";
     const status = normalizeStatus(readAttribute(attrs, "blog.status"));
     const explicitSlug = readAttribute(attrs, "blog.slug");
-    const slug = explicitSlug ? slugify(explicitSlug, sourceId) : slugify(title, sourceId);
-    const category = readAttribute(attrs, "blog.category") || normalizedConfig.defaultCategory;
-    const description = readAttribute(attrs, "blog.description") || deriveDescription(markdown);
-    const tags = parseTags(readAttribute(attrs, "blog.tags"));
-    const assetRefs = extractAssetRefs(markdown);
-    const body = normalizeEol(markdown || "").trim();
-    const contentBody = normalizedConfig.includeTitle && !/^#\s/.test(body) ? `# ${title}\n\n${body}` : body;
+    const stableSlug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(String(existingSlug || ""))
+        ? String(existingSlug)
+        : "";
+    const slug = explicitSlug ? slugify(explicitSlug, sourceId) : stableSlug || slugify(title, sourceId);
+    const category = readAttribute(attrs, "blog.category") || exported.category || normalizedConfig.defaultCategory;
+    const description = readAttribute(attrs, "blog.description") || exported.description || deriveDescription(sourceMarkdown);
+    const configuredTags = readAttribute(attrs, "blog.tags");
+    const tags = configuredTags ? parseTags(configuredTags) : exported.tags;
+    const assetRefs = extractAssetRefs(sourceMarkdown);
+    const body = normalizeEol(sourceMarkdown).trim();
+    const contentBody = applyTitleToBody(body, title, normalizedConfig.includeTitle);
     const draft = status === "draft" || status === "archived";
     const targetPath = `${normalizedConfig.contentDir}/${slug}.md`;
     const assetDir = `${normalizedConfig.assetDir}/${slug}`;
@@ -245,13 +397,13 @@ function createBlogDocument({ sourceId, sourcePath, title, markdown, attrs, conf
         rewrittenBody = rewrittenBody.split(asset.sourcePath).join(asset.publicPath);
         rewrittenBody = rewrittenBody.split(asset.sourcePath.slice(1)).join(asset.publicPath);
     }
-    const warnings = findWarnings(markdown, assetRefs);
-    const render = (sourceHash) => normalizeEol(
+    const warnings = findWarnings(sourceMarkdown, assetRefs);
+    const render = (sourceHash, updatedDateOverride = effectiveUpdatedDate) => normalizeEol(
         buildFrontmatter({
             title,
             description,
             pubDate: publishDate,
-            updatedDate: effectiveUpdatedDate,
+            updatedDate: updatedDateOverride,
             category,
             tags,
             draft,
@@ -265,13 +417,19 @@ function createBlogDocument({ sourceId, sourcePath, title, markdown, attrs, conf
         sourceId,
         sourcePath,
         title,
+        pubDate: publishDate,
+        updatedDate: effectiveUpdatedDate,
+        pinPubDateOnSync,
+        firstPush,
         status,
+        category,
         slug,
         targetPath,
         assetDir,
         assetRefs,
         assets,
         warnings,
+        sourceUpdatedDate,
         render,
     };
 }
@@ -291,9 +449,11 @@ async function sha256Text(value) {
 
 async function createSyncPlan(input) {
     const document = createBlogDocument(input);
-    // sourceHash is calculated against a canonical document with an empty
-    // sourceHash field. This avoids a circular hash while remaining stable.
-    const sourceHash = await sha256Text(document.render(""));
+    // Keep push time out of sourceHash, so an unchanged article remains
+    // unchanged when scanned on a later day. Use the source document's edit
+    // date here to preserve compatibility with existing sync manifests. The
+    // sync date is still included in contentHash after rendering.
+    const sourceHash = await sha256Text(document.render("", document.sourceUpdatedDate));
     const content = document.render(sourceHash);
     const contentHash = await sha256Text(content);
     return {
@@ -308,7 +468,12 @@ async function createSyncPlan(input) {
         assets: document.assets,
         warnings: document.warnings,
         status: document.status,
+        category: document.category,
         action: "create",
+        pubDate: document.pubDate,
+        updatedDate: document.updatedDate,
+        pinPubDateOnSync: document.pinPubDateOnSync,
+        firstPush: document.firstPush,
     };
 }
 
