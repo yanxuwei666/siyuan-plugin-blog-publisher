@@ -239,7 +239,9 @@ async function inspectPlan(root, manifest, plan) {
         reason = entry.sourceHash === plan.sourceHash ? "更新文章同步日期" : "思源内容有更新";
     } else if (targetHash) {
         action = "conflict";
-        reason = "目标文件存在且不是本插件上次写入的版本。";
+        reason = entry
+            ? "目标文件存在且不是本插件上次写入的版本。"
+            : "目标文件已存在且未登记在同步清单中，拒绝覆盖。";
     } else if (entry) {
         action = "update";
         reason = "同步清单存在，但目标文件已不存在。";

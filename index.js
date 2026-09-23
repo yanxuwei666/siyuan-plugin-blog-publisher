@@ -620,6 +620,410 @@ var require_local_adapter = __commonJS({
   }
 });
 
+// directory-adapter.js
+var require_directory_adapter = __commonJS({
+  "directory-adapter.js"(exports2, module2) {
+    "use strict";
+    var SYNC_DATE_VERSION = 1;
+    var DB_NAME = "siyuan-blog-publisher";
+    var DB_VERSION = 1;
+    var DB_STORE = "directory-handles";
+    function getHostPlatform() {
+      const platform = String(globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || "").toLowerCase();
+      if (platform.includes("win")) return "windows";
+      if (platform.includes("mac") || platform.includes("darwin")) return "macos";
+      return "other";
+    }
+    function isDirectoryAccessSupported2() {
+      return typeof globalThis.window?.showDirectoryPicker === "function" && typeof globalThis.indexedDB !== "undefined";
+    }
+    function openDatabase() {
+      return new Promise((resolve, reject) => {
+        const request = globalThis.indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = () => {
+          const database = request.result;
+          if (!database.objectStoreNames.contains(DB_STORE)) {
+            database.createObjectStore(DB_STORE);
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error("\u65E0\u6CD5\u6253\u5F00\u672C\u673A\u76EE\u5F55\u6388\u6743\u5B58\u50A8\u3002"));
+        request.onblocked = () => reject(new Error("\u76EE\u5F55\u6388\u6743\u5B58\u50A8\u6B63\u5728\u5347\u7EA7\uFF0C\u8BF7\u5173\u95ED\u5176\u4ED6\u601D\u6E90\u7A97\u53E3\u540E\u91CD\u8BD5\u3002"));
+      });
+    }
+    async function readStoredHandle(key) {
+      const database = await openDatabase();
+      return new Promise((resolve, reject) => {
+        const transaction = database.transaction(DB_STORE, "readonly");
+        const request = transaction.objectStore(DB_STORE).get(key);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => reject(request.error || new Error("\u8BFB\u53D6\u672C\u673A\u76EE\u5F55\u6388\u6743\u5931\u8D25\u3002"));
+        transaction.oncomplete = () => database.close();
+        transaction.onerror = () => {
+          database.close();
+          reject(transaction.error || new Error("\u8BFB\u53D6\u672C\u673A\u76EE\u5F55\u6388\u6743\u5931\u8D25\u3002"));
+        };
+        transaction.onabort = () => {
+          database.close();
+          reject(transaction.error || new Error("\u8BFB\u53D6\u672C\u673A\u76EE\u5F55\u6388\u6743\u5931\u8D25\u3002"));
+        };
+      });
+    }
+    async function writeStoredHandle(key, handle) {
+      const database = await openDatabase();
+      return new Promise((resolve, reject) => {
+        const transaction = database.transaction(DB_STORE, "readwrite");
+        transaction.objectStore(DB_STORE).put(handle, key);
+        transaction.oncomplete = () => {
+          database.close();
+          resolve();
+        };
+        transaction.onerror = () => {
+          database.close();
+          reject(transaction.error || new Error("\u4FDD\u5B58\u672C\u673A\u76EE\u5F55\u6388\u6743\u5931\u8D25\u3002"));
+        };
+        transaction.onabort = () => {
+          database.close();
+          reject(transaction.error || new Error("\u4FDD\u5B58\u672C\u673A\u76EE\u5F55\u6388\u6743\u5931\u8D25\u3002"));
+        };
+      });
+    }
+    var DirectoryStore2 = class {
+      constructor(platform = getHostPlatform()) {
+        this.platform = platform;
+        this.key = `root:${platform}`;
+      }
+      static isSupported() {
+        return isDirectoryAccessSupported2();
+      }
+      async getHandle() {
+        if (!isDirectoryAccessSupported2()) return null;
+        return readStoredHandle(this.key);
+      }
+      async chooseAndSave() {
+        if (!isDirectoryAccessSupported2()) {
+          throw new Error("\u5F53\u524D\u601D\u6E90\u8FD0\u884C\u73AF\u5883\u4E0D\u652F\u6301\u76EE\u5F55\u6388\u6743\uFF0C\u8BF7\u4F7F\u7528 Chromium \u684C\u9762\u7248\u6216\u914D\u7F6E\u5907\u7528 Bridge\u3002");
+        }
+        const handle = await globalThis.window.showDirectoryPicker({
+          id: "siyuan-blog-publisher",
+          mode: "readwrite"
+        });
+        const permission = await this.ensurePermission(handle, true);
+        if (!permission) {
+          throw new Error("\u6CA1\u6709\u83B7\u5F97\u535A\u5BA2\u76EE\u5F55\u7684\u8BFB\u5199\u6388\u6743\u3002");
+        }
+        await writeStoredHandle(this.key, handle);
+        return handle;
+      }
+      async ensurePermission(handle, request = false) {
+        if (!handle || typeof handle.queryPermission !== "function") return false;
+        let permission = await handle.queryPermission({ mode: "readwrite" });
+        if (permission !== "granted" && request && typeof handle.requestPermission === "function") {
+          permission = await handle.requestPermission({ mode: "readwrite" });
+        }
+        return permission === "granted";
+      }
+    };
+    function safeRelativePath(value) {
+      if (typeof value !== "string" || !value.trim()) {
+        throw new Error("\u540C\u6B65\u8BA1\u5212\u5305\u542B\u7A7A\u6587\u4EF6\u8DEF\u5F84\u3002");
+      }
+      const normalized = value.replace(/\\/g, "/");
+      const parts = normalized.split("/");
+      if (normalized.startsWith("/") || /^[a-zA-Z]:\//.test(normalized) || normalized.startsWith("//") || parts.some((part) => part === ".." || /[\u0000-\u001f]/.test(part)) || parts.every((part) => !part || part === ".")) {
+        throw new Error(`\u62D2\u7EDD\u8BBF\u95EE\u535A\u5BA2\u76EE\u5F55\u4E4B\u5916\u7684\u8DEF\u5F84\uFF1A${value}`);
+      }
+      const cleanParts = parts.filter((part) => part && part !== ".");
+      if (!cleanParts.length) throw new Error(`\u540C\u6B65\u8BA1\u5212\u5305\u542B\u65E0\u6548\u6587\u4EF6\u8DEF\u5F84\uFF1A${value}`);
+      return cleanParts;
+    }
+    async function resolveParent(root, relativePath, create = false) {
+      const parts = safeRelativePath(relativePath);
+      const fileName = parts.pop();
+      let directory = root;
+      for (const part of parts) {
+        try {
+          directory = await directory.getDirectoryHandle(part, { create });
+        } catch (error) {
+          if (!create && error?.name === "NotFoundError") return null;
+          throw error;
+        }
+      }
+      return { directory, fileName };
+    }
+    async function readFile(root, relativePath) {
+      const parent = await resolveParent(root, relativePath);
+      if (!parent) return null;
+      try {
+        const handle = await parent.directory.getFileHandle(parent.fileName);
+        return new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      } catch (error) {
+        if (error?.name === "NotFoundError") return null;
+        throw error;
+      }
+    }
+    async function removeFile(root, relativePath) {
+      const parent = await resolveParent(root, relativePath);
+      if (!parent) return;
+      try {
+        await parent.directory.removeEntry(parent.fileName);
+      } catch (error) {
+        if (error?.name !== "NotFoundError") throw error;
+      }
+    }
+    async function writeFile(root, relativePath, content) {
+      const parent = await resolveParent(root, relativePath, true);
+      const handle = await parent.directory.getFileHandle(parent.fileName, { create: true });
+      const writer = await handle.createWritable();
+      try {
+        await writer.write(content);
+        await writer.close();
+      } catch (error) {
+        await writer.abort().catch(() => void 0);
+        throw error;
+      }
+    }
+    async function sha256(bytes) {
+      if (!globalThis.crypto?.subtle) {
+        throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301 Web Crypto\uFF0C\u65E0\u6CD5\u68C0\u67E5\u540C\u6B65\u6587\u4EF6\u3002");
+      }
+      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", buffer);
+      return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    }
+    function decodeBase64(value) {
+      const binary = globalThis.atob(value);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes;
+    }
+    function throwIfAborted(signal) {
+      if (signal?.aborted) {
+        const error = new Error("\u540C\u6B65\u5DF2\u53D6\u6D88\u3002");
+        error.name = "AbortError";
+        throw error;
+      }
+    }
+    async function readManifest(root) {
+      const bytes = await readFile(root, ".siyuan-sync.json");
+      if (!bytes) {
+        return { version: 1, project: root.name || "blog", documents: {} };
+      }
+      let value;
+      try {
+        value = JSON.parse(new TextDecoder().decode(bytes));
+      } catch (error) {
+        throw new Error("\u540C\u6B65\u6E05\u5355 .siyuan-sync.json \u4E0D\u662F\u5408\u6CD5 JSON\u3002");
+      }
+      if (!value || typeof value !== "object" || !value.documents || typeof value.documents !== "object" || Array.isArray(value.documents)) {
+        throw new Error("\u540C\u6B65\u6E05\u5355\u683C\u5F0F\u4E0D\u6B63\u786E\u3002");
+      }
+      return value;
+    }
+    async function inspectPlan(root, manifest, plan) {
+      if (!plan || typeof plan !== "object" || !/^[0-9]{14}-[a-z0-9]{7}$/i.test(String(plan.sourceId || ""))) {
+        throw new Error("\u540C\u6B65\u8BA1\u5212\u7F3A\u5C11\u6709\u6548\u7684\u601D\u6E90\u6587\u6863 ID\u3002");
+      }
+      const entry = manifest.documents[plan.sourceId];
+      const existing = await readFile(root, plan.targetPath);
+      const targetHash = existing ? await sha256(existing) : null;
+      let action = "create";
+      let reason = "\u76EE\u6807\u6587\u4EF6\u4E0D\u5B58\u5728";
+      if (entry && entry.path !== plan.targetPath) {
+        action = "conflict";
+        reason = `slug \u6216\u76EE\u6807\u8DEF\u5F84\u53D1\u751F\u53D8\u5316\uFF1B\u65E7\u6587\u4EF6 ${entry.path} \u4E0D\u4F1A\u88AB\u81EA\u52A8\u5220\u9664\u3002`;
+      } else if (targetHash && entry && targetHash === entry.contentHash && entry.sourceHash === plan.sourceHash && (entry.syncDateVersion >= SYNC_DATE_VERSION || entry.pushDateVersion >= SYNC_DATE_VERSION)) {
+        action = "skip";
+        reason = "\u601D\u6E90\u5185\u5BB9\u672A\u53D8\u5316";
+      } else if (targetHash && entry && targetHash === plan.contentHash) {
+        action = "skip";
+        reason = "\u5185\u5BB9\u672A\u53D8\u5316";
+      } else if (targetHash && entry && targetHash === entry.contentHash) {
+        action = "update";
+        reason = entry.sourceHash === plan.sourceHash ? "\u66F4\u65B0\u6587\u7AE0\u540C\u6B65\u65E5\u671F" : "\u601D\u6E90\u5185\u5BB9\u6709\u66F4\u65B0";
+      } else if (targetHash) {
+        action = "conflict";
+        reason = entry ? "\u76EE\u6807\u6587\u4EF6\u5DF2\u88AB\u624B\u52A8\u4FEE\u6539\uFF0C\u62D2\u7EDD\u8986\u76D6\u3002" : "\u76EE\u6807\u6587\u4EF6\u5DF2\u5B58\u5728\u4E14\u672A\u767B\u8BB0\u5728\u540C\u6B65\u6E05\u5355\u4E2D\uFF0C\u62D2\u7EDD\u8986\u76D6\u3002";
+      } else if (entry) {
+        action = "update";
+        reason = "\u540C\u6B65\u6E05\u5355\u5B58\u5728\uFF0C\u4F46\u76EE\u6807\u6587\u4EF6\u5DF2\u4E0D\u5B58\u5728\u3002";
+      }
+      const assets = [];
+      for (const asset of Array.isArray(plan.assets) ? plan.assets : []) {
+        await resolveParent(root, asset.targetPath);
+        const assetEntry = (entry?.assets || []).find((item) => item.targetPath === asset.targetPath);
+        const supplied = typeof asset.contentBase64 === "string" ? decodeBase64(asset.contentBase64) : null;
+        const assetHash = supplied ? await sha256(supplied) : asset.hash || "";
+        const current = await readFile(root, asset.targetPath);
+        const currentHash = current ? await sha256(current) : null;
+        let assetAction = "create";
+        let assetReason = "\u8D44\u6E90\u4E0D\u5B58\u5728";
+        if (currentHash && assetEntry && currentHash === assetHash) {
+          assetAction = "skip";
+          assetReason = "\u8D44\u6E90\u672A\u53D8\u5316";
+        } else if (currentHash && assetEntry && currentHash === assetEntry.hash) {
+          assetAction = "update";
+          assetReason = "\u8D44\u6E90\u6709\u66F4\u65B0";
+        } else if (currentHash) {
+          assetAction = "conflict";
+          assetReason = "\u8D44\u6E90\u5DF2\u88AB\u624B\u52A8\u4FEE\u6539\u6216\u672A\u767B\u8BB0\uFF0C\u62D2\u7EDD\u8986\u76D6\u3002";
+        }
+        assets.push({ ...asset, action: assetAction, reason: assetReason, hash: assetHash });
+        if (assetAction === "conflict" && action !== "conflict") {
+          action = "conflict";
+          reason = `\u8D44\u6E90 ${asset.targetPath} \u5B58\u5728\u51B2\u7A81\u3002`;
+        }
+      }
+      return { plan, action, reason, assets };
+    }
+    async function inspectPlans(root, plans, manifest) {
+      const targetPaths = /* @__PURE__ */ new Set();
+      const inspected = [];
+      for (const plan of plans) {
+        const paths = [plan?.targetPath, ...Array.isArray(plan?.assets) ? plan.assets.map((asset) => asset?.targetPath) : []].filter((item) => typeof item === "string" && item);
+        const duplicate = paths.find((item) => targetPaths.has(item));
+        paths.forEach((item) => targetPaths.add(item));
+        if (duplicate) {
+          inspected.push({ plan, action: "conflict", reason: `\u6587\u7AE0\u6216\u8D44\u6E90\u76EE\u6807\u8DEF\u5F84\u91CD\u590D\uFF1A${duplicate}`, assets: [] });
+          continue;
+        }
+        inspected.push(await inspectPlan(root, manifest, plan));
+      }
+      return inspected;
+    }
+    function publicResult(item) {
+      return {
+        sourceId: item.plan.sourceId,
+        title: item.plan.title,
+        targetPath: item.plan.targetPath,
+        action: item.action,
+        reason: item.reason,
+        warnings: item.plan.warnings || [],
+        assets: item.assets.map((asset) => ({
+          sourcePath: asset.sourcePath,
+          targetPath: asset.targetPath,
+          action: asset.action,
+          reason: asset.reason
+        }))
+      };
+    }
+    async function applyOperations(root, operations, signal) {
+      const originals = [];
+      for (const operation of operations) {
+        throwIfAborted(signal);
+        originals.push({ path: operation.path, content: await readFile(root, operation.path) });
+      }
+      const applied = [];
+      try {
+        for (let index = 0; index < operations.length; index += 1) {
+          throwIfAborted(signal);
+          applied.push(index);
+          await writeFile(root, operations[index].path, operations[index].content);
+        }
+      } catch (error) {
+        const rollbackErrors = [];
+        for (const index of applied.reverse()) {
+          const original = originals[index];
+          try {
+            if (original.content) {
+              await writeFile(root, original.path, original.content);
+            } else {
+              await removeFile(root, original.path);
+            }
+          } catch (rollbackError) {
+            rollbackErrors.push(rollbackError.message || String(rollbackError));
+          }
+        }
+        if (rollbackErrors.length) {
+          throw new Error(`${error.message || error}\uFF1B\u56DE\u6EDA\u90E8\u5206\u6587\u4EF6\u65F6\u4E5F\u5931\u8D25\uFF1A${rollbackErrors.join("\uFF1B")}`);
+        }
+        throw error;
+      }
+    }
+    var DirectorySyncAdapter2 = class {
+      constructor(root, signal) {
+        this.root = root;
+        this.signal = signal;
+      }
+      async status() {
+        throwIfAborted(this.signal);
+        return { manifest: await readManifest(this.root) };
+      }
+      async preview(plans) {
+        throwIfAborted(this.signal);
+        const manifest = await readManifest(this.root);
+        const inspected = await inspectPlans(this.root, plans, manifest);
+        return { results: inspected.map(publicResult) };
+      }
+      async apply(plans) {
+        throwIfAborted(this.signal);
+        const manifest = await readManifest(this.root);
+        const inspected = await inspectPlans(this.root, plans, manifest);
+        const results = inspected.map(publicResult);
+        if (inspected.some((item) => item.action === "conflict")) {
+          const error = new Error("\u540C\u6B65\u5B58\u5728\u51B2\u7A81\uFF0C\u672A\u5199\u5165\u4EFB\u4F55\u6587\u4EF6\u3002");
+          error.results = results;
+          throw error;
+        }
+        const operations = [];
+        let changed = false;
+        for (const item of inspected) {
+          if (item.action === "conflict") continue;
+          if (item.action !== "skip") {
+            operations.push({ path: item.plan.targetPath, content: new TextEncoder().encode(item.plan.content || "") });
+            changed = true;
+          }
+          const savedAssets = [];
+          for (const asset of item.assets) {
+            if (asset.action === "conflict") continue;
+            if (asset.action !== "skip") {
+              if (typeof asset.contentBase64 !== "string") {
+                throw new Error(`\u8D44\u6E90 ${asset.sourcePath} \u6CA1\u6709\u4F20\u5165\u5185\u5BB9\u3002`);
+              }
+              operations.push({ path: asset.targetPath, content: decodeBase64(asset.contentBase64) });
+              changed = true;
+            }
+            savedAssets.push({ targetPath: asset.targetPath, hash: asset.hash, sourcePath: asset.sourcePath });
+          }
+          if (item.action !== "skip" || item.assets.some((asset) => asset.action !== "skip")) {
+            manifest.documents[item.plan.sourceId] = {
+              path: item.plan.targetPath,
+              assetDir: item.plan.assetDir,
+              slug: item.plan.slug,
+              pubDate: item.plan.pubDate,
+              updatedDate: item.plan.updatedDate || "",
+              sourceHash: item.plan.sourceHash,
+              contentHash: item.plan.contentHash,
+              syncDateVersion: SYNC_DATE_VERSION,
+              lastSyncAt: (/* @__PURE__ */ new Date()).toISOString(),
+              assets: savedAssets
+            };
+            changed = true;
+          }
+        }
+        if (changed) {
+          manifest.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+          operations.push({
+            path: ".siyuan-sync.json",
+            content: new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}
+`)
+          });
+          await applyOperations(this.root, operations, this.signal);
+        }
+        return { results, manifest };
+      }
+    };
+    module2.exports = {
+      DirectoryStore: DirectoryStore2,
+      DirectorySyncAdapter: DirectorySyncAdapter2,
+      getHostPlatform,
+      isDirectoryAccessSupported: isDirectoryAccessSupported2
+    };
+  }
+});
+
 // src/index.js
 var { Plugin, Dialog, Setting, showMessage } = require("siyuan");
 var {
@@ -631,6 +1035,11 @@ var {
 } = require_blog_core();
 var { SiyuanApi } = require_siyuan_api();
 var { LocalAdapter } = require_local_adapter();
+var {
+  DirectoryStore,
+  DirectorySyncAdapter,
+  isDirectoryAccessSupported
+} = require_directory_adapter();
 var DATA_KEY = "config";
 var BlogPublisherPlugin = class extends Plugin {
   constructor(...args) {
@@ -719,6 +1128,53 @@ var BlogPublisherPlugin = class extends Plugin {
     const macRoot = textField(this.config.localRootMac, "~/Code/personal/my-blog");
     const contentDir = textField(this.config.contentDir, "src/content/blog");
     const assetDir = textField(this.config.assetDir, "public/images/blog");
+    const directoryStore = new DirectoryStore();
+    const directorySummary = document.createElement("span");
+    directorySummary.className = "siyuan-blog-publisher__directory-summary";
+    const chooseDirectoryButton = document.createElement("button");
+    chooseDirectoryButton.type = "button";
+    chooseDirectoryButton.className = "b3-button b3-button--outline";
+    chooseDirectoryButton.textContent = this.t("chooseBlogDirectory");
+    const directoryAction = document.createElement("div");
+    directoryAction.className = "siyuan-blog-publisher__setting-action";
+    directoryAction.append(directorySummary, chooseDirectoryButton);
+    const refreshDirectorySummary = async () => {
+      if (!DirectoryStore.isSupported()) {
+        directorySummary.textContent = this.t("directoryPickerUnavailable");
+        chooseDirectoryButton.disabled = true;
+        return;
+      }
+      chooseDirectoryButton.disabled = false;
+      try {
+        const handle = await directoryStore.getHandle();
+        directorySummary.textContent = handle ? this.t("selectedDirectorySummary", {
+          platform: platformLabelForKey(directoryStore.platform, (key) => this.t(key)),
+          directory: handle.name
+        }) : this.t("directoryNotSelectedSummary", {
+          platform: platformLabelForKey(directoryStore.platform, (key) => this.t(key))
+        });
+      } catch (error) {
+        directorySummary.textContent = this.t("directoryStorageFailed", { error: error.message });
+      }
+    };
+    await refreshDirectorySummary();
+    chooseDirectoryButton.addEventListener("click", async () => {
+      chooseDirectoryButton.disabled = true;
+      try {
+        const handle = await directoryStore.chooseAndSave();
+        directorySummary.textContent = this.t("selectedDirectorySummary", {
+          platform: platformLabelForKey(directoryStore.platform, (key) => this.t(key)),
+          directory: handle.name
+        });
+        showMessage(this.t("directorySelected", { directory: handle.name }));
+      } catch (error) {
+        if (error?.name !== "AbortError") {
+          showMessage(this.t("directorySelectFailed", { error: error.message }), 7e3, "error");
+        }
+      } finally {
+        chooseDirectoryButton.disabled = false;
+      }
+    });
     const bridgeUrl = textField(this.config.bridgeUrl, "http://127.0.0.1:18765");
     const bridgeToken = textField(this.config.bridgeToken, this.t("bridgeTokenPlaceholder"));
     bridgeToken.type = "password";
@@ -757,6 +1213,7 @@ var BlogPublisherPlugin = class extends Plugin {
     includeTitle.className = "b3-switch";
     includeTitle.checked = this.config.includeTitle;
     const checkButton = document.createElement("button");
+    checkButton.type = "button";
     checkButton.className = "b3-button b3-button--outline";
     checkButton.textContent = this.t("checkBridge");
     checkButton.addEventListener("click", async () => {
@@ -778,6 +1235,19 @@ var BlogPublisherPlugin = class extends Plugin {
         checkButton.disabled = false;
       }
     });
+    const bridgeFallback = document.createElement("details");
+    bridgeFallback.className = "siyuan-blog-publisher__bridge-fallback";
+    const bridgeFallbackSummary = document.createElement("summary");
+    bridgeFallbackSummary.textContent = this.t("settingBridgeFallbackSummary");
+    const bridgeFallbackRows = document.createElement("div");
+    bridgeFallbackRows.className = "siyuan-blog-publisher__bridge-fallback-rows";
+    bridgeFallbackRows.append(
+      labelledControl(this.t("settingWindowsPathTitle"), windowsRoot),
+      labelledControl(this.t("settingMacPathTitle"), macRoot),
+      labelledControl(this.t("settingBridgeUrlTitle"), bridgeAction(bridgeUrl, checkButton)),
+      labelledControl(this.t("settingBridgeTokenTitle"), bridgeToken)
+    );
+    bridgeFallback.append(bridgeFallbackSummary, bridgeFallbackRows);
     this.setting = new Setting({
       confirmCallback: async () => {
         this.config = normalizeConfig({
@@ -808,16 +1278,10 @@ var BlogPublisherPlugin = class extends Plugin {
       actionElement: notebook
     });
     this.setting.addItem({
-      title: this.t("settingWindowsPathTitle"),
-      description: this.t("settingWindowsPathDescription"),
+      title: this.t("settingOutputDirectoryTitle"),
+      description: this.t("settingOutputDirectoryDescription"),
       direction: "row",
-      actionElement: windowsRoot
-    });
-    this.setting.addItem({
-      title: this.t("settingMacPathTitle"),
-      description: this.t("settingMacPathDescription"),
-      direction: "row",
-      actionElement: macRoot
+      actionElement: directoryAction
     });
     this.setting.addItem({
       title: this.t("settingContentDirTitle"),
@@ -832,16 +1296,10 @@ var BlogPublisherPlugin = class extends Plugin {
       actionElement: assetDir
     });
     this.setting.addItem({
-      title: this.t("settingBridgeUrlTitle"),
-      description: this.t("settingBridgeUrlDescription"),
+      title: this.t("settingBridgeFallbackTitle"),
+      description: this.t("settingBridgeFallbackDescription"),
       direction: "row",
-      actionElement: bridgeAction(bridgeUrl, checkButton)
-    });
-    this.setting.addItem({
-      title: this.t("settingBridgeTokenTitle"),
-      description: this.t("settingBridgeTokenDescription"),
-      direction: "row",
-      actionElement: bridgeToken
+      actionElement: bridgeFallback
     });
     this.setting.addItem({
       title: this.t("settingDefaultCategoryTitle"),
@@ -895,16 +1353,20 @@ var BlogPublisherPlugin = class extends Plugin {
     const selectAllButton = root.querySelector("[data-action='select-all']");
     const previewButton = root.querySelector("[data-action='preview']");
     const syncButton = root.querySelector("[data-action='sync']");
+    const chooseDirectoryButton = root.querySelector("[data-action='choose-directory']");
+    const outputNote = root.querySelector("[data-role='output-note']");
     const closeButton = root.querySelector("[data-action='close']");
     const bulkCategory = root.querySelector("[data-role='bulk-category']");
     const applyBulkCategoryButton = root.querySelector("[data-action='apply-category']");
+    const directoryStore = new DirectoryStore();
     const state = {
       docs: [],
       selected: /* @__PURE__ */ new Set(),
       manifest: {},
-      bridgeError: "",
+      outputError: "",
       bridgePlatform: "",
       activeLocalRoot: "",
+      directoryHandle: null,
       scanning: false
     };
     const setMessage = (text, isError = false, details = "") => {
@@ -913,10 +1375,21 @@ var BlogPublisherPlugin = class extends Plugin {
       message.classList.toggle("siyuan-blog-publisher__message--error", isError);
     };
     const updateTarget = () => {
+      if (isDirectoryAccessSupported()) {
+        const localTarget2 = state.directoryHandle ? `${platformLabelForKey(directoryStore.platform, (key2) => this.t(key2))}: ${state.directoryHandle.name} \xB7 ${this.config.contentDir}` : this.t("directoryNotSelectedSummary", {
+          platform: platformLabelForKey(directoryStore.platform, (key2) => this.t(key2))
+        });
+        target.textContent = this.t("targetSummaryLocal", { local: localTarget2 });
+        chooseDirectoryButton.hidden = false;
+        outputNote.textContent = this.t("directoryPickerInstructions");
+        return;
+      }
       const key = localPathConfigKey(state.bridgePlatform);
       const configuredPath = key ? this.config[key] || this.config.legacyLocalRoot : "";
       const localTarget = state.bridgePlatform ? `${platformLabel(state.bridgePlatform, (name) => this.t(name))}: ${configuredPath || this.t("platformPathNotConfigured")} \xB7 ${this.config.contentDir}` : this.t("detectingBridgePlatform");
       target.textContent = this.t("targetSummaryLocal", { local: localTarget });
+      chooseDirectoryButton.hidden = true;
+      outputNote.textContent = `${this.t("bridgeCommandReminderBefore")} node local-bridge.js ${this.t("bridgeCommandReminderAfter")}`;
     };
     updateTarget();
     const resolveActiveLocalRoot = async (adapter) => {
@@ -944,6 +1417,28 @@ var BlogPublisherPlugin = class extends Plugin {
         }));
       }
       return { platform: health.platform, localRoot: state.activeLocalRoot };
+    };
+    const resolveOutputAdapter = async (requestPermission = false) => {
+      if (isDirectoryAccessSupported()) {
+        const handle = state.directoryHandle || await directoryStore.getHandle();
+        if (!handle) {
+          throw new Error(this.t("directorySelectFirst"));
+        }
+        if (!await directoryStore.ensurePermission(handle, requestPermission)) {
+          throw new Error(this.t("directoryPermissionRequired"));
+        }
+        state.directoryHandle = handle;
+        state.bridgePlatform = "";
+        state.activeLocalRoot = "";
+        updateTarget();
+        return {
+          kind: "directory",
+          adapter: new DirectorySyncAdapter(handle, controller.signal)
+        };
+      }
+      const adapter = new LocalAdapter(this.config.bridgeUrl, this.config.bridgeToken);
+      const targetInfo = await resolveActiveLocalRoot(adapter);
+      return { kind: "bridge", adapter, targetInfo };
     };
     const getCategoryChoices = (current = "") => {
       const choices = [this.t("uncategorized"), ...this.config.categories];
@@ -994,8 +1489,9 @@ var BlogPublisherPlugin = class extends Plugin {
     const updateButtons = () => {
       const hasSelection = state.selected.size > 0;
       previewButton.disabled = !hasSelection;
-      const hasLocalPath = Boolean(this.config.localRootWindows || this.config.localRootMac || this.config.legacyLocalRoot);
+      const hasLocalPath = isDirectoryAccessSupported() ? Boolean(state.directoryHandle) : Boolean(this.config.localRootWindows || this.config.localRootMac || this.config.legacyLocalRoot);
       syncButton.disabled = !hasSelection || !hasLocalPath || state.scanning;
+      chooseDirectoryButton.disabled = state.scanning;
       selectAllButton.disabled = !state.docs.some((item) => shouldPublish(item.plan.status));
       bulkCategory.disabled = !hasSelection || state.scanning;
       applyBulkCategoryButton.disabled = !hasSelection || !bulkCategory.value || state.scanning;
@@ -1058,22 +1554,19 @@ var BlogPublisherPlugin = class extends Plugin {
         updateButtons();
       }
     };
-    const readManifest = async () => {
+    const readManifest = async (requestPermission = false) => {
       state.manifest = {};
-      state.bridgePlatform = "";
-      state.activeLocalRoot = "";
-      updateTarget();
       try {
-        const adapter = new LocalAdapter(this.config.bridgeUrl, this.config.bridgeToken);
-        const targetInfo = await resolveActiveLocalRoot(adapter);
-        const result = await adapter.status(targetInfo.localRoot, controller.signal);
+        const output = await resolveOutputAdapter(requestPermission);
+        const result = output.kind === "directory" ? await output.adapter.status() : await output.adapter.status(output.targetInfo.localRoot, controller.signal);
         state.manifest = result.manifest || {};
-        state.bridgeError = "";
+        state.outputError = "";
       } catch (error) {
-        state.bridgeError = error.message;
+        state.outputError = error.message;
       }
+      updateTarget();
     };
-    const scan = async () => {
+    const scan = async (requestPermission = false) => {
       if (state.scanning) {
         return;
       }
@@ -1087,7 +1580,7 @@ var BlogPublisherPlugin = class extends Plugin {
       scanButton.disabled = true;
       setMessage(this.t("scanningDocuments"));
       try {
-        await readManifest();
+        await readManifest(requestPermission);
         const documents = await this.api.listDocuments(this.config.notebookId, controller.signal);
         const scanned = new Array(documents.length);
         let nextIndex = 0;
@@ -1117,11 +1610,11 @@ var BlogPublisherPlugin = class extends Plugin {
         state.docs = scanned.filter(Boolean);
         render();
         const publishable = state.docs.filter((item) => shouldPublish(item.plan.status)).length;
-        const bridgeHint = state.bridgeError ? this.t("bridgeUnavailableHint") : "";
+        const outputHint = state.outputError ? this.t("bridgeUnavailableHint") : "";
         setMessage(
-          this.t("scanCompleted", { documents: state.docs.length, publishable, bridgeHint }),
-          Boolean(state.bridgeError),
-          state.bridgeError
+          this.t("scanCompleted", { documents: state.docs.length, publishable, bridgeHint: outputHint }),
+          Boolean(state.outputError),
+          state.outputError
         );
       } catch (error) {
         if (controller.signal.aborted || error?.name === "AbortError") return;
@@ -1151,10 +1644,6 @@ var BlogPublisherPlugin = class extends Plugin {
       });
     };
     const sync = async () => {
-      if (!this.config.localRootWindows && !this.config.localRootMac && !this.config.legacyLocalRoot) {
-        setMessage(this.t("configurePlatformPathsFirst"), true);
-        return;
-      }
       const selected = state.docs.filter((item) => state.selected.has(item.plan.sourceId));
       if (!selected.length) {
         return;
@@ -1163,9 +1652,8 @@ var BlogPublisherPlugin = class extends Plugin {
       updateButtons();
       setMessage(this.t("syncingDocuments", { count: selected.length }));
       try {
-        const adapter = new LocalAdapter(this.config.bridgeUrl, this.config.bridgeToken);
-        const targetInfo = await resolveActiveLocalRoot(adapter);
-        const status = await adapter.status(targetInfo.localRoot, controller.signal);
+        const output = await resolveOutputAdapter(true);
+        const status = output.kind === "directory" ? await output.adapter.status() : await output.adapter.status(output.targetInfo.localRoot, controller.signal);
         state.manifest = status.manifest || {};
         const plans = [];
         const pushDate = formatLocalDate(/* @__PURE__ */ new Date());
@@ -1178,8 +1666,8 @@ var BlogPublisherPlugin = class extends Plugin {
           }
           plans.push(plan);
         }
-        const result = await adapter.apply(
-          targetInfo.localRoot,
+        const result = output.kind === "directory" ? await output.adapter.apply(plans) : await output.adapter.apply(
+          output.targetInfo.localRoot,
           this.config.contentDir,
           this.config.assetDir,
           plans,
@@ -1199,7 +1687,28 @@ var BlogPublisherPlugin = class extends Plugin {
         if (!controller.signal.aborted && !this.unloaded) updateButtons();
       }
     };
-    scanButton.addEventListener("click", scan);
+    const chooseDirectory = async () => {
+      if (state.scanning) return;
+      state.scanning = true;
+      updateButtons();
+      try {
+        const handle = await directoryStore.chooseAndSave();
+        state.directoryHandle = handle;
+        state.outputError = "";
+        updateTarget();
+        state.scanning = false;
+        await scan(false);
+      } catch (error) {
+        if (error?.name !== "AbortError") {
+          setMessage(this.t("directorySelectFailed", { error: error.message }), true);
+        }
+      } finally {
+        state.scanning = false;
+        updateButtons();
+      }
+    };
+    scanButton.addEventListener("click", () => scan(true));
+    chooseDirectoryButton.addEventListener("click", chooseDirectory);
     selectAllButton.addEventListener("click", () => {
       state.docs.filter((item) => shouldPublish(item.plan.status)).forEach((item) => state.selected.add(item.plan.sourceId));
       render();
@@ -1217,7 +1726,27 @@ var BlogPublisherPlugin = class extends Plugin {
     });
     render();
     updateButtons();
-    scan();
+    const initializePublisher = async () => {
+      if (isDirectoryAccessSupported()) {
+        state.scanning = true;
+        updateButtons();
+        try {
+          state.directoryHandle = await directoryStore.getHandle();
+        } catch (error) {
+          state.outputError = error.message;
+        } finally {
+          state.scanning = false;
+        }
+        updateTarget();
+        updateButtons();
+        if (!state.directoryHandle) {
+          setMessage(this.t("chooseDirectoryBeforeScan"));
+          return;
+        }
+      }
+      await scan(false);
+    };
+    initializePublisher();
   }
 };
 function textField(value, placeholder) {
@@ -1227,6 +1756,14 @@ function textField(value, placeholder) {
   input.value = value || "";
   input.placeholder = placeholder || "";
   return input;
+}
+function labelledControl(labelText, control) {
+  const row = document.createElement("div");
+  row.className = "siyuan-blog-publisher__bridge-fallback-row";
+  const label = document.createElement("span");
+  label.textContent = labelText;
+  row.append(label, control);
+  return row;
 }
 function formatLocalDate(date) {
   const year = date.getFullYear();
@@ -1243,6 +1780,11 @@ function platformLabel(platform, t = (key) => key) {
   if (platform === "win32") return t("platformWindows");
   if (platform === "darwin") return t("platformMac");
   return platform || t("platformUnknown");
+}
+function platformLabelForKey(platform, t = (key) => key) {
+  if (platform === "windows") return t("platformWindows");
+  if (platform === "macos") return t("platformMac");
+  return t("platformUnknown");
 }
 async function stampSyncDates(plan, date, t = (key) => key) {
   let content = String(plan.content || "");
@@ -1303,15 +1845,13 @@ function publisherTemplate(t) {
             <select class="b3-select siyuan-blog-publisher__bulk-category" data-role="bulk-category" title="${escapeHtml(t("bulkCategoryTitle"))}"></select>
             <button class="b3-button b3-button--outline" data-action="apply-category" title="${escapeHtml(t("applyCategoryTitle"))}">${escapeHtml(t("applyCategory"))}</button>
             <span class="fn__flex-1"></span>
+            <button class="b3-button b3-button--outline" data-action="choose-directory">${escapeHtml(t("chooseBlogDirectory"))}</button>
             <button class="b3-button b3-button--outline" data-action="sync">${escapeHtml(t("syncToLocal"))}</button>
         </div>
         <div class="siyuan-blog-publisher__target">
             <span data-role="target"></span>
         </div>
-        <div class="siyuan-blog-publisher__bridge-note" role="note">
-            <span>${escapeHtml(t("bridgeCommandReminderBefore"))}</span>
-            <code>node local-bridge.js</code>
-            <span>${escapeHtml(t("bridgeCommandReminderAfter"))}</span>
+        <div class="siyuan-blog-publisher__bridge-note" data-role="output-note" role="note">
         </div>
         <div class="siyuan-blog-publisher__header">
             <span></span><span>${escapeHtml(t("documentTitle"))}</span><span>${escapeHtml(t("sourcePath"))}</span><span>${escapeHtml(t("status"))}</span><span>${escapeHtml(t("category"))}</span><span>${escapeHtml(t("targetFile"))}</span>

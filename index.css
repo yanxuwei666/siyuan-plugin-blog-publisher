@@ -182,6 +182,43 @@
     flex: 1;
 }
 
+.siyuan-blog-publisher__directory-summary {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.siyuan-blog-publisher__bridge-fallback {
+    width: min(100%, 520px);
+}
+
+.siyuan-blog-publisher__bridge-fallback summary {
+    color: var(--b3-theme-on-surface-light);
+    cursor: pointer;
+}
+
+.siyuan-blog-publisher__bridge-fallback-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.siyuan-blog-publisher__bridge-fallback-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    color: var(--b3-theme-on-surface-light);
+    font-size: 12px;
+}
+
+.siyuan-blog-publisher__bridge-fallback-row input {
+    width: 100%;
+}
+
 .siyuan-blog-publisher__category-editor {
     width: min(100%, 520px);
 }

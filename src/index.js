@@ -10,6 +10,11 @@ const {
 } = require("../blog-core");
 const { SiyuanApi } = require("../siyuan-api");
 const { LocalAdapter } = require("../local-adapter");
+const {
+    DirectoryStore,
+    DirectorySyncAdapter,
+    isDirectoryAccessSupported,
+} = require("../directory-adapter");
 
 const DATA_KEY = "config";
 
@@ -107,6 +112,55 @@ class BlogPublisherPlugin extends Plugin {
         const macRoot = textField(this.config.localRootMac, "~/Code/personal/my-blog");
         const contentDir = textField(this.config.contentDir, "src/content/blog");
         const assetDir = textField(this.config.assetDir, "public/images/blog");
+        const directoryStore = new DirectoryStore();
+        const directorySummary = document.createElement("span");
+        directorySummary.className = "siyuan-blog-publisher__directory-summary";
+        const chooseDirectoryButton = document.createElement("button");
+        chooseDirectoryButton.type = "button";
+        chooseDirectoryButton.className = "b3-button b3-button--outline";
+        chooseDirectoryButton.textContent = this.t("chooseBlogDirectory");
+        const directoryAction = document.createElement("div");
+        directoryAction.className = "siyuan-blog-publisher__setting-action";
+        directoryAction.append(directorySummary, chooseDirectoryButton);
+        const refreshDirectorySummary = async () => {
+            if (!DirectoryStore.isSupported()) {
+                directorySummary.textContent = this.t("directoryPickerUnavailable");
+                chooseDirectoryButton.disabled = true;
+                return;
+            }
+            chooseDirectoryButton.disabled = false;
+            try {
+                const handle = await directoryStore.getHandle();
+                directorySummary.textContent = handle
+                    ? this.t("selectedDirectorySummary", {
+                        platform: platformLabelForKey(directoryStore.platform, (key) => this.t(key)),
+                        directory: handle.name,
+                    })
+                    : this.t("directoryNotSelectedSummary", {
+                        platform: platformLabelForKey(directoryStore.platform, (key) => this.t(key)),
+                    });
+            } catch (error) {
+                directorySummary.textContent = this.t("directoryStorageFailed", { error: error.message });
+            }
+        };
+        await refreshDirectorySummary();
+        chooseDirectoryButton.addEventListener("click", async () => {
+            chooseDirectoryButton.disabled = true;
+            try {
+                const handle = await directoryStore.chooseAndSave();
+                directorySummary.textContent = this.t("selectedDirectorySummary", {
+                    platform: platformLabelForKey(directoryStore.platform, (key) => this.t(key)),
+                    directory: handle.name,
+                });
+                showMessage(this.t("directorySelected", { directory: handle.name }));
+            } catch (error) {
+                if (error?.name !== "AbortError") {
+                    showMessage(this.t("directorySelectFailed", { error: error.message }), 7000, "error");
+                }
+            } finally {
+                chooseDirectoryButton.disabled = false;
+            }
+        });
         const bridgeUrl = textField(this.config.bridgeUrl, "http://127.0.0.1:18765");
         const bridgeToken = textField(this.config.bridgeToken, this.t("bridgeTokenPlaceholder"));
         bridgeToken.type = "password";
@@ -146,6 +200,7 @@ class BlogPublisherPlugin extends Plugin {
         includeTitle.checked = this.config.includeTitle;
 
         const checkButton = document.createElement("button");
+        checkButton.type = "button";
         checkButton.className = "b3-button b3-button--outline";
         checkButton.textContent = this.t("checkBridge");
         checkButton.addEventListener("click", async () => {
@@ -167,6 +222,19 @@ class BlogPublisherPlugin extends Plugin {
                 checkButton.disabled = false;
             }
         });
+        const bridgeFallback = document.createElement("details");
+        bridgeFallback.className = "siyuan-blog-publisher__bridge-fallback";
+        const bridgeFallbackSummary = document.createElement("summary");
+        bridgeFallbackSummary.textContent = this.t("settingBridgeFallbackSummary");
+        const bridgeFallbackRows = document.createElement("div");
+        bridgeFallbackRows.className = "siyuan-blog-publisher__bridge-fallback-rows";
+        bridgeFallbackRows.append(
+            labelledControl(this.t("settingWindowsPathTitle"), windowsRoot),
+            labelledControl(this.t("settingMacPathTitle"), macRoot),
+            labelledControl(this.t("settingBridgeUrlTitle"), bridgeAction(bridgeUrl, checkButton)),
+            labelledControl(this.t("settingBridgeTokenTitle"), bridgeToken),
+        );
+        bridgeFallback.append(bridgeFallbackSummary, bridgeFallbackRows);
 
         this.setting = new Setting({
             confirmCallback: async () => {
@@ -198,16 +266,10 @@ class BlogPublisherPlugin extends Plugin {
             actionElement: notebook,
         });
         this.setting.addItem({
-            title: this.t("settingWindowsPathTitle"),
-            description: this.t("settingWindowsPathDescription"),
+            title: this.t("settingOutputDirectoryTitle"),
+            description: this.t("settingOutputDirectoryDescription"),
             direction: "row",
-            actionElement: windowsRoot,
-        });
-        this.setting.addItem({
-            title: this.t("settingMacPathTitle"),
-            description: this.t("settingMacPathDescription"),
-            direction: "row",
-            actionElement: macRoot,
+            actionElement: directoryAction,
         });
         this.setting.addItem({
             title: this.t("settingContentDirTitle"),
@@ -222,16 +284,10 @@ class BlogPublisherPlugin extends Plugin {
             actionElement: assetDir,
         });
         this.setting.addItem({
-            title: this.t("settingBridgeUrlTitle"),
-            description: this.t("settingBridgeUrlDescription"),
+            title: this.t("settingBridgeFallbackTitle"),
+            description: this.t("settingBridgeFallbackDescription"),
             direction: "row",
-            actionElement: bridgeAction(bridgeUrl, checkButton),
-        });
-        this.setting.addItem({
-            title: this.t("settingBridgeTokenTitle"),
-            description: this.t("settingBridgeTokenDescription"),
-            direction: "row",
-            actionElement: bridgeToken,
+            actionElement: bridgeFallback,
         });
         this.setting.addItem({
             title: this.t("settingDefaultCategoryTitle"),
@@ -287,16 +343,20 @@ class BlogPublisherPlugin extends Plugin {
         const selectAllButton = root.querySelector("[data-action='select-all']");
         const previewButton = root.querySelector("[data-action='preview']");
         const syncButton = root.querySelector("[data-action='sync']");
+        const chooseDirectoryButton = root.querySelector("[data-action='choose-directory']");
+        const outputNote = root.querySelector("[data-role='output-note']");
         const closeButton = root.querySelector("[data-action='close']");
         const bulkCategory = root.querySelector("[data-role='bulk-category']");
         const applyBulkCategoryButton = root.querySelector("[data-action='apply-category']");
+        const directoryStore = new DirectoryStore();
         const state = {
             docs: [],
             selected: new Set(),
             manifest: {},
-            bridgeError: "",
+            outputError: "",
             bridgePlatform: "",
             activeLocalRoot: "",
+            directoryHandle: null,
             scanning: false,
         };
 
@@ -307,12 +367,25 @@ class BlogPublisherPlugin extends Plugin {
         };
 
         const updateTarget = () => {
+            if (isDirectoryAccessSupported()) {
+                const localTarget = state.directoryHandle
+                    ? `${platformLabelForKey(directoryStore.platform, (key) => this.t(key))}: ${state.directoryHandle.name} · ${this.config.contentDir}`
+                    : this.t("directoryNotSelectedSummary", {
+                        platform: platformLabelForKey(directoryStore.platform, (key) => this.t(key)),
+                    });
+                target.textContent = this.t("targetSummaryLocal", { local: localTarget });
+                chooseDirectoryButton.hidden = false;
+                outputNote.textContent = this.t("directoryPickerInstructions");
+                return;
+            }
             const key = localPathConfigKey(state.bridgePlatform);
             const configuredPath = key ? this.config[key] || this.config.legacyLocalRoot : "";
             const localTarget = state.bridgePlatform
                 ? `${platformLabel(state.bridgePlatform, (name) => this.t(name))}: ${configuredPath || this.t("platformPathNotConfigured")} · ${this.config.contentDir}`
                 : this.t("detectingBridgePlatform");
             target.textContent = this.t("targetSummaryLocal", { local: localTarget });
+            chooseDirectoryButton.hidden = true;
+            outputNote.textContent = `${this.t("bridgeCommandReminderBefore")} node local-bridge.js ${this.t("bridgeCommandReminderAfter")}`;
         };
         updateTarget();
         const resolveActiveLocalRoot = async (adapter) => {
@@ -340,6 +413,28 @@ class BlogPublisherPlugin extends Plugin {
                 }));
             }
             return { platform: health.platform, localRoot: state.activeLocalRoot };
+        };
+        const resolveOutputAdapter = async (requestPermission = false) => {
+            if (isDirectoryAccessSupported()) {
+                const handle = state.directoryHandle || await directoryStore.getHandle();
+                if (!handle) {
+                    throw new Error(this.t("directorySelectFirst"));
+                }
+                if (!await directoryStore.ensurePermission(handle, requestPermission)) {
+                    throw new Error(this.t("directoryPermissionRequired"));
+                }
+                state.directoryHandle = handle;
+                state.bridgePlatform = "";
+                state.activeLocalRoot = "";
+                updateTarget();
+                return {
+                    kind: "directory",
+                    adapter: new DirectorySyncAdapter(handle, controller.signal),
+                };
+            }
+            const adapter = new LocalAdapter(this.config.bridgeUrl, this.config.bridgeToken);
+            const targetInfo = await resolveActiveLocalRoot(adapter);
+            return { kind: "bridge", adapter, targetInfo };
         };
         const getCategoryChoices = (current = "") => {
             const choices = [this.t("uncategorized"), ...this.config.categories];
@@ -394,8 +489,11 @@ class BlogPublisherPlugin extends Plugin {
         const updateButtons = () => {
             const hasSelection = state.selected.size > 0;
             previewButton.disabled = !hasSelection;
-            const hasLocalPath = Boolean(this.config.localRootWindows || this.config.localRootMac || this.config.legacyLocalRoot);
+            const hasLocalPath = isDirectoryAccessSupported()
+                ? Boolean(state.directoryHandle)
+                : Boolean(this.config.localRootWindows || this.config.localRootMac || this.config.legacyLocalRoot);
             syncButton.disabled = !hasSelection || !hasLocalPath || state.scanning;
+            chooseDirectoryButton.disabled = state.scanning;
             selectAllButton.disabled = !state.docs.some((item) => shouldPublish(item.plan.status));
             bulkCategory.disabled = !hasSelection || state.scanning;
             applyBulkCategoryButton.disabled = !hasSelection || !bulkCategory.value || state.scanning;
@@ -461,23 +559,22 @@ class BlogPublisherPlugin extends Plugin {
             }
         };
 
-        const readManifest = async () => {
+        const readManifest = async (requestPermission = false) => {
             state.manifest = {};
-            state.bridgePlatform = "";
-            state.activeLocalRoot = "";
-            updateTarget();
             try {
-                const adapter = new LocalAdapter(this.config.bridgeUrl, this.config.bridgeToken);
-                const targetInfo = await resolveActiveLocalRoot(adapter);
-                const result = await adapter.status(targetInfo.localRoot, controller.signal);
+                const output = await resolveOutputAdapter(requestPermission);
+                const result = output.kind === "directory"
+                    ? await output.adapter.status()
+                    : await output.adapter.status(output.targetInfo.localRoot, controller.signal);
                 state.manifest = result.manifest || {};
-                state.bridgeError = "";
+                state.outputError = "";
             } catch (error) {
-                state.bridgeError = error.message;
+                state.outputError = error.message;
             }
+            updateTarget();
         };
 
-        const scan = async () => {
+        const scan = async (requestPermission = false) => {
             if (state.scanning) {
                 return;
             }
@@ -491,7 +588,7 @@ class BlogPublisherPlugin extends Plugin {
             scanButton.disabled = true;
             setMessage(this.t("scanningDocuments"));
             try {
-                await readManifest();
+                await readManifest(requestPermission);
                 const documents = await this.api.listDocuments(this.config.notebookId, controller.signal);
                 const scanned = new Array(documents.length);
                 let nextIndex = 0;
@@ -521,13 +618,13 @@ class BlogPublisherPlugin extends Plugin {
                 state.docs = scanned.filter(Boolean);
                 render();
                 const publishable = state.docs.filter((item) => shouldPublish(item.plan.status)).length;
-                const bridgeHint = state.bridgeError
+                const outputHint = state.outputError
                     ? this.t("bridgeUnavailableHint")
                     : "";
                 setMessage(
-                    this.t("scanCompleted", { documents: state.docs.length, publishable, bridgeHint }),
-                    Boolean(state.bridgeError),
-                    state.bridgeError,
+                    this.t("scanCompleted", { documents: state.docs.length, publishable, bridgeHint: outputHint }),
+                    Boolean(state.outputError),
+                    state.outputError,
                 );
             } catch (error) {
                 if (controller.signal.aborted || error?.name === "AbortError") return;
@@ -561,10 +658,6 @@ class BlogPublisherPlugin extends Plugin {
         };
 
         const sync = async () => {
-            if (!this.config.localRootWindows && !this.config.localRootMac && !this.config.legacyLocalRoot) {
-                setMessage(this.t("configurePlatformPathsFirst"), true);
-                return;
-            }
             const selected = state.docs.filter((item) => state.selected.has(item.plan.sourceId));
             if (!selected.length) {
                 return;
@@ -573,9 +666,10 @@ class BlogPublisherPlugin extends Plugin {
             updateButtons();
             setMessage(this.t("syncingDocuments", { count: selected.length }));
             try {
-                const adapter = new LocalAdapter(this.config.bridgeUrl, this.config.bridgeToken);
-                const targetInfo = await resolveActiveLocalRoot(adapter);
-                const status = await adapter.status(targetInfo.localRoot, controller.signal);
+                const output = await resolveOutputAdapter(true);
+                const status = output.kind === "directory"
+                    ? await output.adapter.status()
+                    : await output.adapter.status(output.targetInfo.localRoot, controller.signal);
                 state.manifest = status.manifest || {};
                 const plans = [];
                 const pushDate = formatLocalDate(new Date());
@@ -588,13 +682,15 @@ class BlogPublisherPlugin extends Plugin {
                     }
                     plans.push(plan);
                 }
-                const result = await adapter.apply(
-                    targetInfo.localRoot,
-                    this.config.contentDir,
-                    this.config.assetDir,
-                    plans,
-                    controller.signal,
-                );
+                const result = output.kind === "directory"
+                    ? await output.adapter.apply(plans)
+                    : await output.adapter.apply(
+                        output.targetInfo.localRoot,
+                        this.config.contentDir,
+                        this.config.assetDir,
+                        plans,
+                        controller.signal,
+                    );
                 if (controller.signal.aborted || this.unloaded) return;
                 const summary = summarizeResults(result.results || [], (key) => this.t(key));
                 showMessage(this.t("syncCompleted", { summary }));
@@ -610,7 +706,29 @@ class BlogPublisherPlugin extends Plugin {
             }
         };
 
-        scanButton.addEventListener("click", scan);
+        const chooseDirectory = async () => {
+            if (state.scanning) return;
+            state.scanning = true;
+            updateButtons();
+            try {
+                const handle = await directoryStore.chooseAndSave();
+                state.directoryHandle = handle;
+                state.outputError = "";
+                updateTarget();
+                state.scanning = false;
+                await scan(false);
+            } catch (error) {
+                if (error?.name !== "AbortError") {
+                    setMessage(this.t("directorySelectFailed", { error: error.message }), true);
+                }
+            } finally {
+                state.scanning = false;
+                updateButtons();
+            }
+        };
+
+        scanButton.addEventListener("click", () => scan(true));
+        chooseDirectoryButton.addEventListener("click", chooseDirectory);
         selectAllButton.addEventListener("click", () => {
             state.docs.filter((item) => shouldPublish(item.plan.status)).forEach((item) => state.selected.add(item.plan.sourceId));
             render();
@@ -628,7 +746,27 @@ class BlogPublisherPlugin extends Plugin {
         });
         render();
         updateButtons();
-        scan();
+        const initializePublisher = async () => {
+            if (isDirectoryAccessSupported()) {
+                state.scanning = true;
+                updateButtons();
+                try {
+                    state.directoryHandle = await directoryStore.getHandle();
+                } catch (error) {
+                    state.outputError = error.message;
+                } finally {
+                    state.scanning = false;
+                }
+                updateTarget();
+                updateButtons();
+                if (!state.directoryHandle) {
+                    setMessage(this.t("chooseDirectoryBeforeScan"));
+                    return;
+                }
+            }
+            await scan(false);
+        };
+        initializePublisher();
     }
 }
 
@@ -639,6 +777,15 @@ function textField(value, placeholder) {
     input.value = value || "";
     input.placeholder = placeholder || "";
     return input;
+}
+
+function labelledControl(labelText, control) {
+    const row = document.createElement("div");
+    row.className = "siyuan-blog-publisher__bridge-fallback-row";
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    row.append(label, control);
+    return row;
 }
 
 function formatLocalDate(date) {
@@ -658,6 +805,12 @@ function platformLabel(platform, t = (key) => key) {
     if (platform === "win32") return t("platformWindows");
     if (platform === "darwin") return t("platformMac");
     return platform || t("platformUnknown");
+}
+
+function platformLabelForKey(platform, t = (key) => key) {
+    if (platform === "windows") return t("platformWindows");
+    if (platform === "macos") return t("platformMac");
+    return t("platformUnknown");
 }
 
 async function stampSyncDates(plan, date, t = (key) => key) {
@@ -729,15 +882,13 @@ function publisherTemplate(t) {
             <select class="b3-select siyuan-blog-publisher__bulk-category" data-role="bulk-category" title="${escapeHtml(t("bulkCategoryTitle"))}"></select>
             <button class="b3-button b3-button--outline" data-action="apply-category" title="${escapeHtml(t("applyCategoryTitle"))}">${escapeHtml(t("applyCategory"))}</button>
             <span class="fn__flex-1"></span>
+            <button class="b3-button b3-button--outline" data-action="choose-directory">${escapeHtml(t("chooseBlogDirectory"))}</button>
             <button class="b3-button b3-button--outline" data-action="sync">${escapeHtml(t("syncToLocal"))}</button>
         </div>
         <div class="siyuan-blog-publisher__target">
             <span data-role="target"></span>
         </div>
-        <div class="siyuan-blog-publisher__bridge-note" role="note">
-            <span>${escapeHtml(t("bridgeCommandReminderBefore"))}</span>
-            <code>node local-bridge.js</code>
-            <span>${escapeHtml(t("bridgeCommandReminderAfter"))}</span>
+        <div class="siyuan-blog-publisher__bridge-note" data-role="output-note" role="note">
         </div>
         <div class="siyuan-blog-publisher__header">
             <span></span><span>${escapeHtml(t("documentTitle"))}</span><span>${escapeHtml(t("sourcePath"))}</span><span>${escapeHtml(t("status"))}</span><span>${escapeHtml(t("category"))}</span><span>${escapeHtml(t("targetFile"))}</span>

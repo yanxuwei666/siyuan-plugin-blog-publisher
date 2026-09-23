@@ -19,17 +19,13 @@ Convert selected SiYuan documents to Astro blog Markdown and sync them into the 
 
 ## Local setup
 
-Start the Bridge on the computer that has the blog project directory:
+In plugin settings or the publisher, click “Choose blog project folder” and select the repository root. Direct sync writes Markdown to `src/content/blog`, images to `public/images/blog`, and the sync manifest to `.siyuan-sync.json` at the repository root.
 
-```sh
-node local-bridge.js
-```
-
-On first start, the Bridge generates and prints an access token. Paste it into the plugin's “Bridge access token” setting. The token is stored in `~/.siyuan-blog-publisher/bridge-token` (Windows: `%USERPROFILE%\.siyuan-blog-publisher\bridge-token`); the Bridge listens only on `http://127.0.0.1:18765`.
-
-In plugin settings, configure both the Windows blog project path and the macOS blog project path. The Bridge reports its operating system, and the plugin automatically selects the matching path when scanning or syncing. For example, enter `D:\Code\personal\my-blog` for Windows and `~/Code/personal/my-blog` for macOS. SiYuan and Bridge must be able to access the same project directory on the computer in use.
+Choose the folder once in SiYuan on Windows and once on macOS. Each computer keeps its folder permission in local browser storage; it is not part of synced SiYuan settings. If the system asks again later, grant read and write access. The plugin does not need the absolute path or a running Bridge.
 
 In the publisher, scan documents, review the generated Markdown, and click “Sync to local repository”. Commit and push the resulting files separately from the blog project's own code directory with your usual Git client or terminal.
+
+If the current environment does not support the folder picker, configure the Bridge fallback in plugin settings. Run it on the computer that holds the repository and configure the Windows and macOS paths and access token as before.
 
 ## Development
 

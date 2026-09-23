@@ -27,8 +27,7 @@ for (const item of files) {
 
 fs.rmSync(archive, { force: true });
 if (process.platform === "win32") {
-    const command = `$files = @(${files.map((item) => `'${item}'`).join(",")}); Compress-Archive -Path $files -DestinationPath 'package.zip' -Force`;
-    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { cwd: root, stdio: "inherit" });
+    execFileSync("tar.exe", ["-a", "-c", "-f", archive, ...files], { cwd: root, stdio: "inherit" });
 } else {
     execFileSync("zip", ["-q", "-r", archive, ...files], { cwd: root, stdio: "inherit" });
 }
